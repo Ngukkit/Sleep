@@ -1,0 +1,12 @@
+# Ignore directories
+__pycache__/
+version_back/
+result_client/
+
+# Ignore file types
+*.zip
+*.pyc
+*.out
+
+# Ignore specific files
+.DS_Store 

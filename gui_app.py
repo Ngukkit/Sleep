@@ -15,6 +15,7 @@ import cv2
 import time
 import torch
 import argparse
+import socket_sender
 
 # Add root directory to path for imports
 FILE = Path(__file__).resolve()
@@ -25,13 +26,6 @@ if str(ROOT) not in sys.path:
 import yolov5_detector # 'detect' 대신 'yolov5_detector'를 직접 임포트
 import dlib_analyzer # Ensure dlib_analyzer.py is in the same directory or accessible
 import mediapipe_analyzer # Ensure mediapipe_analyzer.py is in the same directory or accessible
-from d3dfa_analyzer import (
-    ThreeDDFAAnalyzer,
-    EYE_AR_THRESH, EYE_AR_CONSEC_FRAMES,
-    NOD_PITCH_THRESH, NOD_CONSEC_FRAMES,
-    DISTRACT_YAW_THRESH, DISTRACT_CONSEC_FRAMES,
-    MOUTH_AR_THRESH, YAWN_CONSEC_FRAMES
-)
 
 from mediapipe.tasks.python import vision
 import mediapipe as mp
@@ -52,14 +46,12 @@ class VideoThread(QThread):
         self.yolo_detector = None
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
-        self.three_ddfa_analyzer = None
 
         # Front Face Calibration related variables
         self._dlib_calibration_trigger = False
         self._mediapipe_calibration_trigger = False
         self._set_dlib_front_face_mode = False
         self._set_mediapipe_front_face_mode = False
-        self._set_3ddfa_front_face_mode = False
 
         # Live Stream 모드용 결과 저장 변수
         self.latest_face_result = None
@@ -109,15 +101,6 @@ class VideoThread(QThread):
     def set_mediapipe_front_face_mode(self, value):
         self._set_mediapipe_front_face_mode = value
 
-    # 3DDFA Set Front Face Mode getter/setter
-    @property
-    def set_3ddfa_front_face_mode(self):
-        return self._set_3ddfa_front_face_mode
-
-    @set_3ddfa_front_face_mode.setter
-    def set_3ddfa_front_face_mode(self, value):
-        self._set_3ddfa_front_face_mode = value
-
 
     def on_face_result(self, result: vision.FaceLandmarkerResult, image: mp.Image, timestamp_ms: int):
         self.latest_face_result = result
@@ -139,7 +122,6 @@ class VideoThread(QThread):
         enable_dlib = self.config_args.get('enable_dlib', False)
         enable_yolo = self.config_args.get('enable_yolo', True)
         enable_mediapipe = self.config_args.get('enable_mediapipe', False)
-        enable_3ddfa = self.config_args.get('enable_3ddfa', False)
         mediapipe_mode_str = self.config_args.get('mediapipe_mode', 'Video (File)')
         
         # 모듈 초기화
@@ -175,9 +157,6 @@ class VideoThread(QThread):
             )
         else: # MediaPipe가 비활성화된 경우 None으로 명시적 설정
             self.mediapipe_analyzer = None
-
-        if enable_3ddfa:
-            self.three_ddfa_analyzer = ThreeDDFAAnalyzer()
 
         cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_V4L2)
         if not cap.isOpened():
@@ -256,71 +235,7 @@ class VideoThread(QThread):
                         print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
                     self.mediapipe_calibration_trigger = False # 캘리브레이션 요청 초기화
 
-            # --- 4. 3DDFA Analysis ---
-            three_ddfa_results = {}
-            if enable_3ddfa and self.three_ddfa_analyzer:
-                three_ddfa_results = self.three_ddfa_analyzer.analyze_frame(im0.copy())
-                im0 = three_ddfa_results['vis_image']
-            
-            # --- 5. Driver Status Analysis (using 3DDFA results) ---
-            if enable_3ddfa and three_ddfa_results:
-                im0 = three_ddfa_results['vis_image']
-                (pitch, yaw, roll) = three_ddfa_results['head_pose']
-                landmarks_3d = three_ddfa_results['face_landmarks_3d'][0].T # (68, 3)
-                
-                # 랜드마크 인덱스
-                left_eye_start, left_eye_end = 42, 48
-                right_eye_start, right_eye_end = 36, 42
-                mouth_start, mouth_end = 48, 68
-
-                left_eye_pts = landmarks_3d[left_eye_start:left_eye_end]
-                right_eye_pts = landmarks_3d[right_eye_start:right_eye_end]
-                mouth_pts = landmarks_3d[mouth_start:mouth_end]
-
-                left_ear = calculate_ear(left_eye_pts)
-                right_ear = calculate_ear(right_eye_pts)
-                ear = (left_ear + right_ear) / 2.0
-                mar = calculate_mar(mouth_pts)
-
-                # 상태 판단 로직
-                if ear < EYE_AR_THRESH:
-                    self.eye_counter += 1
-                else:
-                    self.eye_counter = 0
-
-                if pitch > NOD_PITCH_THRESH:
-                    self.nod_counter += 1
-                else:
-                    self.nod_counter = 0
-
-                if abs(yaw) > DISTRACT_YAW_THRESH:
-                    self.distract_counter += 1
-                else:
-                    self.distract_counter = 0
-
-                if mar > MOUTH_AR_THRESH:
-                    self.yawn_counter += 1
-                else:
-                    self.yawn_counter = 0
-
-                if self.eye_counter >= EYE_AR_CONSEC_FRAMES:
-                    self.driver_status = "Drowsy (Eyes Closed)"
-                elif self.nod_counter >= NOD_CONSEC_FRAMES:
-                    self.driver_status = "Drowsy (Nodding)"
-                elif self.yawn_counter >= YAWN_CONSEC_FRAMES:
-                    self.driver_status = "Drowsy (Yawning)"
-                elif self.distract_counter >= DISTRACT_CONSEC_FRAMES: pass # 이미 위에서 상태 지정
-                else: self.driver_status = "Normal"
-                
-                # Visualizer를 사용해 상태 정보 표시
-                im0 = self.visualizer_instance.draw_3ddfa_status(
-                    im0, self.driver_status, ear, pitch, yaw)
-
-            elif enable_3ddfa and not three_ddfa_results:
-                 # 얼굴 미검출
-                 im0 = self.visualizer_instance.draw_face_not_detected(im0)
-
-            # --- 6. Visualization ---
+            # --- 4. Visualization ---
             if enable_yolo and self.yolo_detector:
                 im0 = self.visualizer_instance.draw_yolov5_results(im0, yolo_dets, self.yolo_detector.names, hide_labels, hide_conf)
 
@@ -341,6 +256,27 @@ class VideoThread(QThread):
             fps = 1/(new_frame_time-prev_frame_time) if (new_frame_time-prev_frame_time) > 0 else 0
             prev_frame_time = new_frame_time
             im0 = self.visualizer_instance.draw_fps(im0, fps)
+            
+            # --- 소켓 전송: 분석 결과를 전송 ---
+            # YOLO 결과를 사람이 읽을 수 있는 dict 리스트로 변환
+            yolo_results = []
+            if yolo_dets is not None and len(yolo_dets):
+                for det in yolo_dets.tolist():
+                    *xyxy, conf, cls = det
+                    yolo_results.append({
+                        'bbox': xyxy,
+                        'conf': conf,
+                        'class_id': int(cls),
+                        'class_name': self.yolo_detector.names[int(cls)]
+                    })
+            result_to_send = {
+                'yolo': yolo_results,
+                'dlib': dlib_results,
+                'mediapipe': mediapipe_results,
+                'status': self.driver_status
+            }
+            # print(f"result_to_send: {result_to_send}")
+            socket_sender.send_result_via_socket(result_to_send, self.config_args['socket_ip'], self.config_args['socket_port'])
             
             self.change_pixmap_signal.emit(im0)
             # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
@@ -364,10 +300,11 @@ class MainApp(QWidget):
         self.video_thread = None
         self.is_set_dlib_front_face_mode = False 
         self.is_set_mediapipe_front_face_mode = False # MediaPipe 정면 설정 모드 상태
-        self.is_set_3ddfa_front_face_mode = False # 3DDFA 정면 설정 모드 상태
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
-        self.three_ddfa_analyzer = None
+        # 소켓 전송용 IP/Port
+        self.socket_ip = "127.0.0.1"
+        self.socket_port = 5001
 
         self.init_ui()
 
@@ -397,14 +334,10 @@ class MainApp(QWidget):
 
         self.chk_dlib = QCheckBox("Enable Dlib")
         self.chk_dlib.setChecked(False)
+        self.chk_dlib.stateChanged.connect(self.update_front_face_checkbox_states)
         self.chk_mediapipe = QCheckBox("Enable MediaPipe")
         self.chk_mediapipe.setChecked(False)
-        self.chk_3ddfa = QCheckBox("Enable 3DDFA")
-        self.chk_3ddfa.setChecked(False)
-        # dlib/mediapipe/3ddfa 체크박스가 바뀔 때마다 정면설정 체크박스도 자동 활성화/비활성화
-        self.chk_dlib.stateChanged.connect(self.update_front_face_checkbox_states)
         self.chk_mediapipe.stateChanged.connect(self.update_front_face_checkbox_states)
-        self.chk_3ddfa.stateChanged.connect(self.update_front_face_checkbox_states)
 
         # MediaPipe 실행 모드 선택
         self.combo_mediapipe_mode = QComboBox()
@@ -426,13 +359,6 @@ class MainApp(QWidget):
         # 초기에는 MediaPipe 활성화 여부에 따라 활성화/비활성화
         self.chk_set_mediapipe_front_face.setEnabled(self.chk_mediapipe.isChecked())
 
-        # 3DDFA 정면 설정 스위치 추가
-        self.chk_set_3ddfa_front_face = QCheckBox("Set Front Face (3DDFA)")
-        self.chk_set_3ddfa_front_face.setChecked(False)
-        self.chk_set_3ddfa_front_face.stateChanged.connect(self.toggle_set_3ddfa_front_face_mode)
-        # 초기에는 3DDFA 활성화 여부에 따라 활성화/비활성화
-        self.chk_set_3ddfa_front_face.setEnabled(self.chk_3ddfa.isChecked())
-
         self.update_front_face_checkbox_states() # 초기 상태 설정
 
         self.label_source = QLabel("Video Source (0 for webcam):")
@@ -442,6 +368,17 @@ class MainApp(QWidget):
         self.txt_weights = QLineEdit(str(ROOT / 'weights' / 'best.pt'))
         self.btn_browse_weights = QPushButton("Browse")
         self.btn_browse_weights.clicked.connect(self.browse_weights)
+
+        # 소켓 IP/Port 입력란 추가
+        socket_layout = QHBoxLayout()
+        self.label_socket_ip = QLabel("Socket IP:")
+        self.txt_socket_ip = QLineEdit(self.socket_ip)
+        self.label_socket_port = QLabel("Port:")
+        self.txt_socket_port = QLineEdit(str(self.socket_port))
+        socket_layout.addWidget(self.label_socket_ip)
+        socket_layout.addWidget(self.txt_socket_ip)
+        socket_layout.addWidget(self.label_socket_port)
+        socket_layout.addWidget(self.txt_socket_port)
 
         control_layout.addWidget(self.btn_start)
         control_layout.addWidget(self.btn_stop)
@@ -454,11 +391,9 @@ class MainApp(QWidget):
         control_layout.addWidget(self.chk_yolo)
         control_layout.addWidget(self.chk_dlib)
         control_layout.addWidget(self.chk_mediapipe)
-        control_layout.addWidget(self.chk_3ddfa)
         control_layout.addWidget(self.combo_mediapipe_mode)
         control_layout.addWidget(self.chk_set_dlib_front_face)
         control_layout.addWidget(self.chk_set_mediapipe_front_face)
-        control_layout.addWidget(self.chk_set_3ddfa_front_face)
         control_layout.addStretch()
 
         source_weights_layout = QHBoxLayout()
@@ -469,6 +404,7 @@ class MainApp(QWidget):
         source_weights_layout.addWidget(self.btn_browse_weights)
 
         main_layout.addLayout(source_weights_layout)
+        main_layout.addLayout(socket_layout)
         main_layout.addLayout(control_layout)
         main_layout.addLayout(video_layout)
 
@@ -483,6 +419,7 @@ class MainApp(QWidget):
     def update_front_face_checkbox_states(self):
         # Dlib 활성화 여부에 따라 Dlib 정면 설정 체크박스 활성화/비활성화
         self.chk_set_dlib_front_face.setEnabled(self.chk_dlib.isChecked())
+        # Dlib이 꺼지면 캘리브레이션 체크도 해제
         if not self.chk_dlib.isChecked():
             self.chk_set_dlib_front_face.setChecked(False)
 
@@ -491,11 +428,7 @@ class MainApp(QWidget):
         if not self.chk_mediapipe.isChecked():
             self.chk_set_mediapipe_front_face.setChecked(False)
 
-        # 3DDFA 활성화 여부에 따라 3DDFA 정면 설정 체크박스 활성화/비활성화
-        self.chk_set_3ddfa_front_face.setEnabled(self.chk_3ddfa.isChecked())
-        if not self.chk_3ddfa.isChecked():
-            self.chk_set_3ddfa_front_face.setChecked(False)
-
+        # (추가) 모든 모델은 독립적으로 활성화 가능하게 별도 제약 없음
 
     def start_detection(self):
         if self.video_thread and self.video_thread.isRunning():
@@ -514,12 +447,10 @@ class MainApp(QWidget):
             self.chk_set_mediapipe_front_face.setChecked(False)
             return
 
-        # 3DDFA 정면 설정 모드가 켜져 있는데 3DDFA가 비활성화된 경우
-        if self.chk_set_3ddfa_front_face.isChecked() and not self.chk_3ddfa.isChecked():
-            QMessageBox.warning(self, "Warning", "To use 'Set Front Face (3DDFA)', 3DDFA must be enabled.")
-            self.chk_set_3ddfa_front_face.setChecked(False)
-            return
-
+        # 소켓 IP/Port 값 저장
+        self.socket_ip = self.txt_socket_ip.text()
+        self.socket_port = int(self.txt_socket_port.text())
+        # VideoThread에 전달
         config_args = {
             'weights': Path(self.txt_weights.text()),
             'source': self.txt_source.text(),
@@ -549,8 +480,9 @@ class MainApp(QWidget):
             'enable_dlib': self.chk_dlib.isChecked(),
             'enable_yolo': self.chk_yolo.isChecked(),
             'enable_mediapipe': self.chk_mediapipe.isChecked(),
-            'enable_3ddfa': self.chk_3ddfa.isChecked(),
-            'mediapipe_mode': self.combo_mediapipe_mode.currentText() # 선택된 모드 추가
+            'mediapipe_mode': self.combo_mediapipe_mode.currentText(), # 선택된 모드 추가
+            'socket_ip': self.socket_ip,
+            'socket_port': self.socket_port
         }
 
         if config_args['enable_dlib']:
@@ -572,7 +504,6 @@ class MainApp(QWidget):
         # VideoThread에 현재 정면 설정 모드 상태 전달 (새로운 속성 사용)
         self.video_thread.set_dlib_front_face_mode = self.is_set_dlib_front_face_mode
         self.video_thread.set_mediapipe_front_face_mode = self.is_set_mediapipe_front_face_mode
-        self.video_thread.set_3ddfa_front_face_mode = self.is_set_3ddfa_front_face_mode
 
         self.video_thread.start()
 
@@ -590,7 +521,7 @@ class MainApp(QWidget):
         self.image_label.clear()
         # 감지 중지 시에는 정면 설정 체크박스를 다시 활성화
         self.update_front_face_checkbox_states()
-        self.is_set_3ddfa_front_face_mode = False
+        self.is_set_mediapipe_front_face_mode = False
 
 
     @pyqtSlot(np.ndarray)
@@ -654,28 +585,6 @@ class MainApp(QWidget):
         else:
             QMessageBox.information(self, "Set Front Face (MediaPipe)", "MediaPipe front face setting mode is off.")
 
-    def toggle_set_3ddfa_front_face_mode(self, state):
-        self.is_set_3ddfa_front_face_mode = bool(state)
-        # 다른 모드가 켜져 있다면, 둘 중 하나만 선택되도록 처리
-        if self.is_set_3ddfa_front_face_mode:
-            if self.chk_set_dlib_front_face.isChecked():
-                self.chk_set_dlib_front_face.setChecked(False)
-            if self.chk_set_mediapipe_front_face.isChecked():
-                self.chk_set_mediapipe_front_face.setChecked(False)
-
-        if self.video_thread: # 스레드가 실행 중이면 스레드에도 상태 전달
-            self.video_thread.set_3ddfa_front_face_mode = self.is_set_3ddfa_front_face_mode
-
-        if self.is_set_3ddfa_front_face_mode:
-            if not self.chk_3ddfa.isChecked():
-                QMessageBox.warning(self, "Warning", "To use 'Set Front Face (3DDFA)', 3DDFA must be enabled.")
-                self.chk_set_3ddfa_front_face.setChecked(False)
-                self.is_set_3ddfa_front_face_mode = False
-                return
-            QMessageBox.information(self, "Set Front Face (3DDFA)", "Click on the video feed while looking straight to calibrate 3DDFA front face.")
-        else:
-            QMessageBox.information(self, "Set Front Face (3DDFA)", "3DDFA front face setting mode is off.")
-
     def image_label_mouse_press_event(self, event):
         # Dlib 정면 설정 모드가 활성화되어 있을 때
         if self.is_set_dlib_front_face_mode and self.chk_dlib.isChecked() and self.video_thread and self.video_thread.isRunning():
@@ -690,13 +599,6 @@ class MainApp(QWidget):
                 print("Mouse clicked to trigger MediaPipe calibration.")
                 self.video_thread.mediapipe_calibration_trigger = True
                 QMessageBox.information(self, "Calibration Triggered", "MediaPipe front face calibration requested. Please look straight at the camera.")
-
-        # 3DDFA 정면 설정 모드가 활성화되어 있을 때
-        elif self.is_set_3ddfa_front_face_mode and self.chk_3ddfa.isChecked() and self.video_thread and self.video_thread.isRunning():
-            if event.button() == Qt.LeftButton:
-                print("Mouse clicked to trigger 3DDFA calibration.")
-                self.video_thread.three_ddfa_calibration_trigger = True
-                QMessageBox.information(self, "Calibration Triggered", "3DDFA front face calibration requested. Please look straight at the camera.")
 
 
     def closeEvent(self, event):

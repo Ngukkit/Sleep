@@ -316,21 +316,3 @@ class Visualizer:
             distracted_color = (0, 0, 255) if is_distracted else (0, 255, 0)
             cv2.putText(image, distracted_text, (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.6, distracted_color, 2)
         return image
-
-    def draw_3ddfa_status(self, image, status, ear, pitch, yaw):
-        """3DDFA 분석 결과를 화면에 표시합니다."""
-        cv2.putText(image, f"STATUS: {status}", (150, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        cv2.putText(image, f"EAR: {ear:.2f}", (480, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(image, f"Pitch: {pitch:.2f}", (480, 60), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(image, f"Yaw: {yaw:.2f}", (480, 90), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        return image
-
-    def draw_face_not_detected(self, image):
-        """얼굴 미검출 상태를 화면에 표시합니다."""
-        cv2.putText(image, "STATUS: Face Not Detected", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        return image
