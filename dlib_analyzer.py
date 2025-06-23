@@ -244,5 +244,8 @@ class DlibAnalyzer:
                     results["head_pose_color"] = (0, 0, 255) # Red for distraction
             else:
                 results["head_pose_color"] = (100, 100, 100) # Grey if not calibrated
+        else:
+            # 얼굴이 아예 인식되지 않을 때도 is_distracted_from_front를 True로 설정
+            results["is_distracted_from_front"] = True
 
         return results

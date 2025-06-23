@@ -124,15 +124,7 @@ class Visualizer:
         return frame
 
     def draw_mediapipe_results(self,image, mp_display_results):
-        """
-        Mediapipe 분석 결과를 영상 프레임에 시각화합니다.
 
-        Args:
-            image (np.array): 분석 결과를 그릴 원본 이미지 프레임 (BGR).
-            mp_display_results (dict): MediapipeAnalyzer.analyze_frame에서 반환된 결과 딕셔너리.
-        Returns:
-            np.array: 분석 결과가 그려진 이미지 프레임.
-        """
         
         # ----------------------------------------------------
         # 1. 얼굴 랜드마크 그리기 (mp_face_mesh.FACEMESH_TESSELATION 사용)
