@@ -1,0 +1,675 @@
+# sleep/mediapipe_analyzer.py
+
+import cv2
+import mediapipe as mp
+import numpy as np
+from pathlib import Path
+import time
+
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+
+EYE_BLINK_THRESHOLD = 0.5
+JAW_OPEN_THRESHOLD = 0.4
+DROWSY_CONSEC_FRAMES = 15
+YAWN_CONSEC_FRAMES = 10
+PITCH_DOWN_THRESHOLD = 10
+PITCH_UP_THRESHOLD = -15
+POSE_CONSEC_FRAMES = 20
+GAZE_VECTOR_THRESHOLD = 0.5
+
+# GUI 호환성을 위한 추가 상수들
+MP_YAW_THRESHOLD = 30.0  # 좌우 회전은 30도까지 허용
+MP_PITCH_THRESHOLD = 10.0  # 고개 숙임/들기는 더 민감하게 (8도)
+MP_ROLL_THRESHOLD = 999.0  # roll은 거의 무시 (매우 큰 값)
+GAZE_THRESHOLD = 0.5
+DISTRACTION_CONSEC_FRAMES = 10
+
+TRUE_PITCH_THRESHOLD = 10.0  # true_pitch가 이 값 이상이면 고개 숙임으로 간주
+
+class MediaPipeAnalyzer:
+    def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None):
+        # GUI 호환성을 위해 기본값 설정
+        if running_mode is None:
+            running_mode = vision.RunningMode.VIDEO
+        
+        self.running_mode = running_mode
+        self.face_result_callback = face_result_callback
+        self.hand_result_callback = hand_result_callback
+
+        # 캘리브레이션 관련 변수들 (GUI 호환성)
+        self.mp_front_face_offset_yaw = 0.0
+        self.mp_front_face_offset_pitch = 0.0
+        self.mp_front_face_offset_roll = 0.0
+        self.calibrated_gaze_x = 0.0
+        self.calibrated_gaze_y = 0.0
+        self.gaze_deviated_frame_count = 0
+        self.is_calibrated = False
+        self.just_calibrated = False  # 방금 캘리브레이션 완료 플래그
+
+        models_dir = Path(__file__).parent
+        face_model_path = models_dir / "models" / "face_landmarker.task"
+        hand_model_path = models_dir / "models" / "hand_landmarker.task"
+
+        # 모델 파일이 없으면 기본 MediaPipe Face Mesh 사용
+        if not face_model_path.exists():
+            print("[MediaPipeAnalyzer] Task API model not found, using traditional MediaPipe Face Mesh")
+            self.use_task_api = True
+            self.face_mesh = mp.solutions.face_mesh.FaceMesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            self.hand_landmarker = None
+        else:
+            self.use_task_api = True
+            for model_path in [face_model_path, hand_model_path]:
+                if not model_path.exists():
+                    raise FileNotFoundError(f"Model file not found: {model_path}.")
+
+            face_options = vision.FaceLandmarkerOptions(
+                base_options=python.BaseOptions(model_asset_path=str(face_model_path)),
+                running_mode=running_mode,
+                result_callback=self.face_result_callback
+                if running_mode == vision.RunningMode.LIVE_STREAM
+                else None,
+                output_face_blendshapes=True,
+                output_facial_transformation_matrixes=True,
+                num_faces=1,
+            )
+            self.face_landmarker = vision.FaceLandmarker.create_from_options(face_options)
+
+            hand_options = vision.HandLandmarkerOptions(
+                base_options=python.BaseOptions(model_asset_path=str(hand_model_path)),
+                running_mode=running_mode,
+                result_callback=self.hand_result_callback
+                if running_mode == vision.RunningMode.LIVE_STREAM
+                else None,
+                num_hands=2,
+            )
+            self.hand_landmarker = vision.HandLandmarker.create_from_options(hand_options)
+
+        self.is_closed = False
+        (
+            self.eye_closed_frame_count,
+            self.yawn_frame_count,
+            self.head_down_frame_count,
+        ) = 0, 0, 0
+        self.head_up_frame_count, self.gaze_deviated_frame_count = 0, 0
+        self.left_hand_off_frame_count, self.right_hand_off_frame_count = 0, 0
+        print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
+
+    def close(self):
+        if self.is_closed:
+            return
+        if self.use_task_api:
+            self.face_landmarker.close()
+            self.hand_landmarker.close()
+        else:
+            self.face_mesh.close()
+        self.is_closed = True
+        print("[MediaPipeAnalyzer] Landmarkers closed.")
+
+    def calibrate_front_pose(self, frame_size, face_landmarks):
+        """GUI 호환성을 위한 캘리브레이션 메서드"""
+        if not face_landmarks:
+            print("캘리브레이션: 랜드마크가 감지되지 않았습니다.")
+            return False
+
+        if self.use_task_api:
+            # Task API 방식: 캘리브레이션 플래그만 설정하고 다음 프레임에서 오프셋 설정
+            print("[MediaPipeAnalyzer] Task API calibration - will set offsets in next frame...")
+            
+            # 캘리브레이션 플래그 설정
+            self.just_calibrated = True  # 다음 프레임에서 오프셋 설정
+            self.is_calibrated = True
+            
+            print("[MediaPipeAnalyzer] Task API front pose calibration flag set.")
+            return True
+        else:
+            # 기존 Face Mesh 방식과 호환되도록 head pose 계산
+            head_pose_data = self._get_mp_head_pose(frame_size, face_landmarks)
+            
+            if head_pose_data:
+                self.mp_front_face_offset_yaw = -head_pose_data["yaw"]
+                self.mp_front_face_offset_pitch = -head_pose_data["pitch"]
+                self.mp_front_face_offset_roll = -head_pose_data["roll"]
+                
+                # gaze 캘리브레이션 - 실제 현재 gaze 값 계산
+                try:
+                    # 눈동자 위치를 기반으로 gaze 계산
+                    left_eye_center = np.array([
+                        (face_landmarks.landmark[33].x + face_landmarks.landmark[133].x) / 2,
+                        (face_landmarks.landmark[33].y + face_landmarks.landmark[133].y) / 2
+                    ])
+                    right_eye_center = np.array([
+                        (face_landmarks.landmark[362].x + face_landmarks.landmark[263].x) / 2,
+                        (face_landmarks.landmark[362].y + face_landmarks.landmark[263].y) / 2
+                    ])
+                    
+                    # 얼굴 중심에서의 상대적 위치
+                    face_center = np.array([0.5, 0.5])  # 정규화된 좌표
+                    gaze_x = (left_eye_center[0] + right_eye_center[0]) / 2 - face_center[0]
+                    gaze_y = (left_eye_center[1] + right_eye_center[1]) / 2 - face_center[1]
+                    
+                    self.calibrated_gaze_x = gaze_x
+                    self.calibrated_gaze_y = gaze_y
+                    
+                    print(f"[MediaPipeAnalyzer] Gaze calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                except Exception as e:
+                    print(f"[MediaPipeAnalyzer] Gaze calibration error: {e}")
+                    self.calibrated_gaze_x = 0.0
+                    self.calibrated_gaze_y = 0.0
+                
+                self.is_calibrated = True
+                self.just_calibrated = True  # 방금 캘리브레이션 완료 표시
+                print("[MediaPipeAnalyzer] Front pose calibrated successfully.")
+                return True
+            else:
+                print("[MediaPipeAnalyzer] Front pose calibration failed.")
+                return False
+
+    def _get_mp_head_pose(self, frame_size, face_landmarks):
+        """MediaPipe Face Mesh에서 head pose 계산 (기존 방식과 호환)"""
+        try:
+            # Task API와 기존 방식 모두 지원하도록 랜드마크 처리
+            if hasattr(face_landmarks, 'landmark'):
+                # 기존 Face Mesh 방식
+                landmarks = np.array([[lm.x * frame_size[1], lm.y * frame_size[0], lm.z] for lm in face_landmarks.landmark])
+            else:
+                # Task API 방식 - 리스트 형태
+                landmarks = np.array([[lm.x * frame_size[1], lm.y * frame_size[0], lm.z] for lm in face_landmarks])
+            
+            # 필요한 랜드마크 인덱스들이 존재하는지 확인
+            required_indices = [1, 152, 33, 263, 61, 291]  # nose, chin, left_eye, right_eye, left_mouth, right_mouth
+            if len(landmarks) < max(required_indices) + 1:
+                print(f"[MediaPipeAnalyzer] Not enough landmarks: {len(landmarks)} < {max(required_indices) + 1}")
+                return None
+            
+            # 얼굴의 주요 포인트들
+            nose = landmarks[1]
+            left_eye = landmarks[33]
+            right_eye = landmarks[263]
+            left_mouth = landmarks[61]
+            right_mouth = landmarks[291]
+            
+            # 얼굴 중심점
+            face_center = np.mean([left_eye, right_eye, left_mouth, right_mouth], axis=0)
+            
+            # 카메라 내부 파라미터 (대략적인 값)
+            focal_length = frame_size[1]
+            center = (frame_size[1] / 2, frame_size[0] / 2)
+            camera_matrix = np.array([
+                [focal_length, 0, center[0]],
+                [0, focal_length, center[1]],
+                [0, 0, 1]
+            ], dtype=np.float64)
+            
+            # Distortion coefficients
+            dist_coeffs = np.zeros((4, 1))
+            
+            # 3D 모델 포인트들 (얼굴의 3D 좌표)
+            model_points = np.array([
+                (0.0, 0.0, 0.0),             # Nose tip
+                (0.0, -330.0, -65.0),        # Chin
+                (-225.0, 170.0, -135.0),     # Left eye left corner
+                (225.0, 170.0, -135.0),      # Right eye right corner
+                (-150.0, -150.0, -125.0),    # Left mouth corner
+                (150.0, -150.0, -125.0)      # Right mouth corner
+            ], dtype=np.float64)
+            
+            # 2D 이미지 포인트들 (x, y 좌표만)
+            image_points = np.array([
+                [landmarks[1][0], landmarks[1][1]],    # Nose tip
+                [landmarks[152][0], landmarks[152][1]],  # Chin
+                [landmarks[33][0], landmarks[33][1]],   # Left eye left corner
+                [landmarks[263][0], landmarks[263][1]],  # Right eye right corner
+                [landmarks[61][0], landmarks[61][1]],   # Left mouth corner
+                [landmarks[291][0], landmarks[291][1]]   # Right mouth corner
+            ], dtype=np.float64)
+            
+            # 포인트 개수와 형식 검증
+            if image_points.shape[0] < 4:
+                print(f"[MediaPipeAnalyzer] Not enough image points: {image_points.shape[0]} < 4")
+                return None
+            
+            # PnP 문제 해결
+            success, rotation_vec, translation_vec = cv2.solvePnP(
+                model_points, image_points, camera_matrix, dist_coeffs,
+                flags=cv2.SOLVEPNP_ITERATIVE
+            )
+            
+            if success:
+                # 회전 벡터를 회전 행렬로 변환
+                rotation_mat, _ = cv2.Rodrigues(rotation_vec)
+                
+                # Euler 각도 계산
+                pitch_val = np.arctan2(-rotation_mat[2, 0], np.sqrt(rotation_mat[2, 1]**2 + rotation_mat[2, 2]**2)) * 180 / np.pi
+                yaw_val = np.arctan2(rotation_mat[1, 0], rotation_mat[0, 0]) * 180 / np.pi
+                roll_val = np.arctan2(rotation_mat[2, 1], rotation_mat[2, 2]) * 180 / np.pi
+
+                # 사용자 피드백 기반으로 yaw와 pitch를 스왑
+                # 고개 숙이기(pitch)가 좌우 회전(yaw)으로, 좌우 회전이 고개 숙이기로 계산되는 문제 수정
+                pitch = yaw_val
+                yaw = pitch_val
+                roll = roll_val
+                
+                # Roll 각도를 -180~180도 범위로 정규화
+                if roll > 180:
+                    roll -= 360
+                elif roll < -180:
+                    roll += 360
+                
+                return {
+                    "pitch": pitch,
+                    "yaw": yaw,
+                    "roll": roll,
+                    "rotation_mat": rotation_mat,
+                    "translation_vec": translation_vec
+                }
+        except Exception as e:
+            print(f"[MediaPipeAnalyzer] Head pose calculation error: {e}")
+        
+        return None
+
+    def analyze_frame(self, frame):
+        """GUI 호환성을 위한 analyze_frame 메서드"""
+        if self.use_task_api:
+            return self.detect_sync(frame)
+        else:
+            return self._analyze_frame_traditional(frame)
+
+    def _analyze_frame_traditional(self, frame):
+        """기존 MediaPipe Face Mesh 방식"""
+        results = {
+            "face_landmarks": None,
+            "is_drowsy": False,
+            "is_yawning": False,
+            "is_distracted_from_front": False,
+            "gaze_x": 0.0,
+            "gaze_y": 0.0,
+            "is_gaze": False,
+            "mp_head_pitch_deg": 0.0,
+            "mp_head_yaw_deg": 0.0,
+            "mp_head_roll_deg": 0.0,
+            "mp_is_calibrated": self.is_calibrated,
+            "mp_is_distracted_from_front": False
+        }
+        
+        # BGR -> RGB 변환
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_mesh_results = self.face_mesh.process(rgb_frame)
+        
+        if face_mesh_results.multi_face_landmarks:
+            face_landmarks = face_mesh_results.multi_face_landmarks[0]
+            results["face_landmarks"] = face_landmarks
+            
+            # Head pose 계산
+            frame_size = (frame.shape[0], frame.shape[1])
+            head_pose_data = self._get_mp_head_pose(frame_size, face_landmarks)
+            
+            if head_pose_data:
+                # 캘리브레이션된 오프셋 적용
+                current_pitch = head_pose_data["pitch"] + self.mp_front_face_offset_pitch
+                current_yaw = head_pose_data["yaw"] + self.mp_front_face_offset_yaw
+                current_roll = head_pose_data["roll"] + self.mp_front_face_offset_roll
+                
+                # 디버깅 출력 (캘리브레이션 상태 확인)
+                print(f"[DEBUG] Head pose: raw(pitch={head_pose_data['pitch']:.1f}, yaw={head_pose_data['yaw']:.1f}, roll={head_pose_data['roll']:.1f})")
+                print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
+                print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
+                
+                results["mp_head_pitch_deg"] = current_pitch
+                results["mp_head_yaw_deg"] = current_yaw
+                results["mp_head_roll_deg"] = current_roll
+                
+                # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                    abs(current_pitch) > MP_PITCH_THRESHOLD):
+                    results["is_distracted_from_front"] = True
+                    results["mp_is_distracted_from_front"] = True
+                    print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                else:
+                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
+                
+                # Gaze 계산 (간단한 방식)
+                # 눈동자 위치를 기반으로 gaze 계산
+                left_eye_center = np.array([
+                    (face_landmarks.landmark[33].x + face_landmarks.landmark[133].x) / 2,
+                    (face_landmarks.landmark[33].y + face_landmarks.landmark[133].y) / 2
+                ])
+                right_eye_center = np.array([
+                    (face_landmarks.landmark[362].x + face_landmarks.landmark[263].x) / 2,
+                    (face_landmarks.landmark[362].y + face_landmarks.landmark[263].y) / 2
+                ])
+                
+                # 얼굴 중심에서의 상대적 위치
+                face_center = np.array([0.5, 0.5])  # 정규화된 좌표
+                gaze_x = (left_eye_center[0] + right_eye_center[0]) / 2 - face_center[0]
+                gaze_y = (left_eye_center[1] + right_eye_center[1]) / 2 - face_center[1]
+                
+                results["gaze_x"] = gaze_x
+                results["gaze_y"] = gaze_y
+                
+                # 방금 캘리브레이션 완료된 경우 현재 gaze 값을 캘리브레이션 값으로 업데이트
+                if self.just_calibrated:
+                    self.calibrated_gaze_x = gaze_x
+                    self.calibrated_gaze_y = gaze_y
+                    print(f"[MediaPipeAnalyzer] Gaze updated after calibration: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                # 캘리브레이션이 아직 완료되지 않았으면 현재 gaze 값을 캘리브레이션 값으로 저장
+                elif not self.is_calibrated:
+                    self.calibrated_gaze_x = gaze_x
+                    self.calibrated_gaze_y = gaze_y
+                    self.is_calibrated = True  # 캘리브레이션 완료 표시
+                    print(f"[MediaPipeAnalyzer] Gaze auto-calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                
+                # 시선 이탈 감지 (캘리브레이션 적용)
+                gaze_diff = abs(gaze_x - self.calibrated_gaze_x)
+                if gaze_diff > GAZE_THRESHOLD:
+                    results["is_gaze"] = True
+                else:
+                    pass
+                
+                # 졸음/하품 감지 (간단한 방식)
+                # 눈 크기로 졸음 감지
+                left_eye_height = abs(face_landmarks.landmark[159].y - face_landmarks.landmark[145].y)
+                right_eye_height = abs(face_landmarks.landmark[386].y - face_landmarks.landmark[374].y)
+                avg_eye_height = (left_eye_height + right_eye_height) / 2
+                
+                if avg_eye_height < 0.02:  # 임계값 조정 필요
+                    results["is_drowsy"] = True
+                
+                # 입 크기로 하품 감지
+                mouth_height = abs(face_landmarks.landmark[13].y - face_landmarks.landmark[14].y)
+                if mouth_height > 0.05:  # 임계값 조정 필요
+                    results["is_yawning"] = True
+        
+        return results
+
+    def _get_head_pose_from_matrix(self, transformation_matrix):
+        """Task API의 transformation_matrix에서 head pose 계산"""
+        # 회전 행렬 추출
+        rotation_matrix = transformation_matrix[0:3, 0:3]
+        
+        try:
+            # Euler 각도 계산
+            pitch_val = np.arctan2(-rotation_matrix[2, 0], np.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2)) * 180 / np.pi
+            yaw_val = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0]) * 180 / np.pi
+            roll_val = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2]) * 180 / np.pi
+            
+            # 사용자 피드백 기반으로 yaw와 pitch를 스왑
+            # 고개 숙이기(pitch)가 좌우 회전(yaw)으로, 좌우 회전이 고개 숙이기로 계산되는 문제 수정
+            pitch = yaw_val
+            yaw = pitch_val
+            roll = roll_val
+            
+            # Roll 각도를 -180~180도 범위로 정규화
+            if roll > 180:
+                roll -= 360
+            elif roll < -180:
+                roll += 360
+
+            return pitch, yaw, roll
+        except Exception as e:
+            print(f"Error calculating head pose from matrix: {e}")
+            return 0, 0, 0
+
+    def get_true_pitch_from_landmarks(self, landmarks):
+        # landmarks: mediapipe의 3D 랜드마크 리스트 (Task API는 리스트, FaceMesh는 .landmark)
+        if hasattr(landmarks, 'landmark'):
+            lm = landmarks.landmark
+        else:
+            lm = landmarks
+        nose = np.array([lm[1].x, lm[1].y, lm[1].z])
+        left_eye = np.array([lm[33].x, lm[33].y, lm[33].z])
+        right_eye = np.array([lm[263].x, lm[263].y, lm[263].z])
+        eye_center = (left_eye + right_eye) / 2
+        face_vec = eye_center - nose
+        face_vec = face_vec / np.linalg.norm(face_vec)
+        z_axis = np.array([0, 0, -1])
+        pitch_rad = np.arccos(np.clip(np.dot(face_vec, z_axis), -1.0, 1.0))
+        pitch_deg = np.degrees(pitch_rad)
+        return pitch_deg
+
+    def _process_results(self, face_result, hand_result):
+        results = {
+            "face_landmarks": [],
+            "pose_landmarks": [],
+            "right_hand_landmarks": [],
+            "left_hand_landmarks": [],
+            "head_pose": None,
+            "is_drowsy": False,
+            "is_yawning": False,
+            "is_head_down": False,
+            "is_head_up": False,
+            "is_gaze_deviated": False,
+            "is_left_hand_off": False,
+            "is_right_hand_off": False,
+            "is_distracted_no_face": False,
+            "ear_value": 0.0,
+            "mar_value": 0.0,
+            "gaze_vector": (0, 0),
+            "all_blendshapes": {},
+            # GUI 호환성을 위한 추가 필드들
+            "mp_head_pitch_deg": 0.0,
+            "mp_head_yaw_deg": 0.0,
+            "mp_head_roll_deg": 0.0,
+            "mp_is_calibrated": self.is_calibrated,
+            "mp_is_distracted_from_front": False,
+            "gaze_x": 0.0,
+            "gaze_y": 0.0,
+            "is_gaze": False,
+            "is_distracted_from_front": False
+        }
+        
+        if face_result and face_result.face_landmarks:
+            results["face_landmarks"] = face_result.face_landmarks[0]
+            # 진짜 pitch 계산
+            true_pitch = self.get_true_pitch_from_landmarks(face_result.face_landmarks[0])
+            results["true_pitch"] = true_pitch
+            # true_pitch 캘리브레이션 적용
+            if not hasattr(self, 'calibrated_true_pitch'):
+                self.calibrated_true_pitch = true_pitch
+            if self.just_calibrated:
+                self.calibrated_true_pitch = true_pitch
+                print(f"[MediaPipeAnalyzer] True pitch calibrated: {true_pitch:.2f}")
+            true_pitch_diff = true_pitch - self.calibrated_true_pitch
+            print(f"[DEBUG] True pitch (nose-eye): {true_pitch:.2f} deg, diff={true_pitch_diff:.2f}")
+            # true_pitch로 고개 숙임 감지
+            if abs(true_pitch_diff) > TRUE_PITCH_THRESHOLD:
+                results["is_head_down"] = True
+                print(f"[DEBUG] True pitch head down detected: |diff|={abs(true_pitch_diff):.2f} > {TRUE_PITCH_THRESHOLD}")
+            else:
+                results["is_head_down"] = False
+            if face_result.face_blendshapes:
+                blendshapes = {
+                    b.category_name: b.score for b in face_result.face_blendshapes[0]
+                }
+                results["all_blendshapes"] = blendshapes
+                left_eye_blink, right_eye_blink = (
+                    blendshapes.get("eyeBlinkLeft", 0),
+                    blendshapes.get("eyeBlinkRight", 0),
+                )
+                avg_blink = (left_eye_blink + right_eye_blink) / 2.0
+                results["ear_value"] = avg_blink
+                self.eye_closed_frame_count = (
+                    self.eye_closed_frame_count + 1
+                    if avg_blink > EYE_BLINK_THRESHOLD
+                    else 0
+                )
+                if self.eye_closed_frame_count >= DROWSY_CONSEC_FRAMES:
+                    results["is_drowsy"] = True
+                jaw_open = blendshapes.get("jawOpen", 0)
+                results["mar_value"] = jaw_open
+                self.yawn_frame_count = (
+                    self.yawn_frame_count + 1 if jaw_open > JAW_OPEN_THRESHOLD else 0
+                )
+                if self.yawn_frame_count >= YAWN_CONSEC_FRAMES:
+                    results["is_yawning"] = True
+                gaze_right = blendshapes.get("eyeLookOutRight", 0) + blendshapes.get(
+                    "eyeLookInLeft", 0
+                )
+                gaze_left = blendshapes.get("eyeLookOutLeft", 0) + blendshapes.get(
+                    "eyeLookInRight", 0
+                )
+                gaze_up, gaze_down = (
+                    blendshapes.get("eyeLookUpLeft", 0)
+                    + blendshapes.get("eyeLookUpRight", 0),
+                    blendshapes.get("eyeLookDownLeft", 0)
+                    + blendshapes.get("eyeLookDownRight", 0),
+                )
+                gaze_x, gaze_y = (
+                    (gaze_left - gaze_right) / 2.0,
+                    (gaze_down - gaze_up) / 2.0,
+                )
+                results["gaze_vector"] = (gaze_x, gaze_y)
+                results["gaze_x"] = gaze_x
+                results["gaze_y"] = gaze_y
+                
+                # 방금 캘리브레이션 완료된 경우 현재 gaze 값을 캘리브레이션 값으로 업데이트
+                if self.just_calibrated:
+                    self.calibrated_gaze_x = gaze_x
+                    self.calibrated_gaze_y = gaze_y
+                    print(f"[MediaPipeAnalyzer] Gaze updated after calibration: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                # 캘리브레이션이 아직 완료되지 않았으면 현재 gaze 값을 캘리브레이션 값으로 저장
+                elif not self.is_calibrated:
+                    self.calibrated_gaze_x = gaze_x
+                    self.calibrated_gaze_y = gaze_y
+                    self.is_calibrated = True  # 캘리브레이션 완료 표시
+                    print(f"[MediaPipeAnalyzer] Gaze auto-calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                
+                # 시선 이탈 감지 (캘리브레이션 적용)
+                gaze_diff = abs(gaze_x - self.calibrated_gaze_x)
+                if gaze_diff > GAZE_THRESHOLD:
+                    results["is_gaze"] = True
+                else:
+                    pass
+                
+                gaze_magnitude = np.sqrt(gaze_x**2 + gaze_y**2)
+                self.gaze_deviated_frame_count = (
+                    self.gaze_deviated_frame_count + 1
+                    if gaze_magnitude > GAZE_VECTOR_THRESHOLD
+                    else 0
+                )
+                if self.gaze_deviated_frame_count >= POSE_CONSEC_FRAMES:
+                    results["is_gaze_deviated"] = True
+                    
+            if face_result.facial_transformation_matrixes:
+                head_pose = self._get_head_pose_from_matrix(
+                    face_result.facial_transformation_matrixes[0]
+                )
+                results["head_pose"] = head_pose
+                pitch, yaw, roll = head_pose
+                
+                # 방금 캘리브레이션 완료된 경우 현재 head pose 값을 캘리브레이션 오프셋으로 설정
+                if self.just_calibrated:
+                    self.mp_front_face_offset_pitch = -pitch
+                    self.mp_front_face_offset_yaw = -yaw
+                    self.mp_front_face_offset_roll = -roll
+                    self.just_calibrated = False  # 플래그 초기화 (gaze와 head pose 모두 처리 후)
+                    print(f"[MediaPipeAnalyzer] Head pose offsets updated after calibration: pitch={-pitch:.1f}, yaw={-yaw:.1f}, roll={-roll:.1f}")
+                
+                # 캘리브레이션된 오프셋 적용
+                current_pitch = pitch + self.mp_front_face_offset_pitch
+                current_yaw = yaw + self.mp_front_face_offset_yaw
+                current_roll = roll + self.mp_front_face_offset_roll
+                
+                # 디버깅 출력 (캘리브레이션 상태 확인)
+                print(f"[DEBUG] Head pose: raw(pitch={pitch:.1f}, yaw={yaw:.1f}, roll={roll:.1f})")
+                print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
+                print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
+                
+                results["mp_head_pitch_deg"] = current_pitch
+                results["mp_head_yaw_deg"] = current_yaw
+                results["mp_head_roll_deg"] = current_roll
+                
+                # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                    abs(current_pitch) > MP_PITCH_THRESHOLD):
+                    results["is_distracted_from_front"] = True
+                    results["mp_is_distracted_from_front"] = True
+                    print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                else:
+                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
+                
+                self.head_down_frame_count = (
+                    self.head_down_frame_count + 5
+                    if pitch > PITCH_DOWN_THRESHOLD
+                    else 0
+                )
+                if self.head_down_frame_count >= POSE_CONSEC_FRAMES:
+                    results["is_head_down"] = True
+                self.head_up_frame_count = (
+                    self.head_up_frame_count + 1 if pitch < PITCH_UP_THRESHOLD else 0
+                )
+                if self.head_up_frame_count >= POSE_CONSEC_FRAMES:
+                    results["is_head_up"] = True
+        else:
+            results["is_distracted_no_face"] = True
+
+        is_left_hand_on_wheel, is_right_hand_on_wheel = False, False
+        if hand_result and hand_result.hand_landmarks:
+            for i, handedness_list in enumerate(hand_result.handedness):
+                handedness, landmarks = (
+                    handedness_list[0].category_name,
+                    hand_result.hand_landmarks[i],
+                )
+                wrist = landmarks[mp.solutions.hands.HandLandmark.WRIST]
+                if handedness == "Left":
+                    results["left_hand_landmarks"] = landmarks
+                    if 0.2 < wrist.x < 0.6 and 0.5 < wrist.y < 1.0:
+                        is_left_hand_on_wheel = True
+                elif handedness == "Right":
+                    results["right_hand_landmarks"] = landmarks
+                    if 0.4 < wrist.x < 0.8 and 0.5 < wrist.y < 1.0:
+                        is_right_hand_on_wheel = True
+
+        self.left_hand_off_frame_count = (
+            0 if is_left_hand_on_wheel else self.left_hand_off_frame_count + 1
+        )
+        if self.left_hand_off_frame_count >= POSE_CONSEC_FRAMES:
+            results["is_left_hand_off"] = True
+        self.right_hand_off_frame_count = (
+            0 if is_right_hand_on_wheel else self.right_hand_off_frame_count + 1
+        )
+        if self.right_hand_off_frame_count >= POSE_CONSEC_FRAMES:
+            results["is_right_hand_off"] = True
+
+        return results
+
+    def detect_sync(self, frame):  # IMAGE, VIDEO 모드용 동기 함수
+        if not self.use_task_api:
+            return self._analyze_frame_traditional(frame)
+            
+        mp_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+        )
+        face_result = (
+            self.face_landmarker.detect(mp_image)
+            if self.running_mode == vision.RunningMode.IMAGE
+            else self.face_landmarker.detect_for_video(
+                mp_image, int(time.time() * 1000)
+            )
+        )
+        hand_result = (
+            self.hand_landmarker.detect(mp_image)
+            if self.running_mode == vision.RunningMode.IMAGE
+            else self.hand_landmarker.detect_for_video(
+                mp_image, int(time.time() * 1000)
+            )
+        )
+        return self._process_results(face_result, hand_result)
+
+    def detect_async(self, frame, timestamp_ms):  # LIVE_STREAM 모드용 비동기 함수
+        if not self.use_task_api:
+            return
+            
+        mp_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+        )
+        self.face_landmarker.detect_async(mp_image, timestamp_ms)
+        self.hand_landmarker.detect_async(mp_image, timestamp_ms)
