@@ -40,6 +40,7 @@ class Visualizer:
 
     def draw_yolov5_results(self, frame, detections, names, hide_labels=False, hide_conf=False):
         tl = self.line_thickness
+        h, w = frame.shape[:2]
         if detections is not None and len(detections):
             for *xyxy, conf, cls in reversed(detections):
                 yolo_color = (255, 200, 90)

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QCheckBox, QLabel, QLineEdit, QFileDialog, QMessageBox, QFrame, QComboBox)
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QDragEnterEvent, QDropEvent
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 import numpy as np
 from scipy.spatial import distance as dist
@@ -33,6 +33,76 @@ import mediapipe as mp
 from detector_utils import calculate_ear, calculate_mar
 
 
+class DragDropLineEdit(QLineEdit):
+    """Custom QLineEdit that accepts drag and drop for video and image files"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setPlaceholderText("Drag video/image file(s) here or enter source (0 for webcam)")
+        self.image_files = []  # Store multiple image files for sequential viewing
+        
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            # Check if it's a video or image file
+            video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v']
+            image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp']
+            supported_extensions = video_extensions + image_extensions
+            
+            # Process all dropped files
+            video_files = []
+            image_files = []
+            
+            for url in urls:
+                file_path = url.toLocalFile()
+                file_ext = Path(file_path).suffix.lower()
+                
+                if file_ext in video_extensions:
+                    video_files.append(file_path)
+                elif file_ext in image_extensions:
+                    image_files.append(file_path)
+            
+            # Handle the files
+            if video_files and image_files:
+                QMessageBox.warning(self, "Mixed Files", 
+                                   "Please drop either video files OR image files, not both.")
+                return
+            elif video_files:
+                # Single video file - use the first one
+                self.setText(video_files[0])
+                self.image_files = []
+            elif image_files:
+                # Multiple image files - store them for sequential viewing
+                self.image_files = image_files
+                self.setText(f"Image Sequence ({len(image_files)} files)")
+            else:
+                QMessageBox.warning(self, "Invalid Files", 
+                                   f"Please drop video or image files. Supported formats:\n"
+                                   f"Video: {', '.join(video_extensions)}\n"
+                                   f"Image: {', '.join(image_extensions)}")
+    
+    def get_image_files(self):
+        """Return the list of image files for sequential viewing"""
+        return self.image_files.copy()
+    
+    def clear_image_files(self):
+        """Clear the image files list"""
+        self.image_files = []
+
+    def setText(self, text):
+        super().setText(text)
+        # 만약 0(웹캠) 또는 비디오 파일이면 image_files 비우기
+        if text.strip() == '0' or text.strip().lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v')):
+            self.clear_image_files()
+
+
 class VideoThread(QThread):
     change_pixmap_signal = pyqtSignal(np.ndarray)
     is_running = False
@@ -42,7 +112,7 @@ class VideoThread(QThread):
         self.config_args = config_args
         self.is_running = True
         
-        self.visualizer_instance = visualizer.Visualizer() # Visualizer 객체를 여기서 한번만 생성
+        self.visualizer_instance = visualizer.Visualizer() # Visualizer 객체를 여기서 한번만 생5성
         self.yolo_detector = None
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
@@ -64,6 +134,11 @@ class VideoThread(QThread):
         self.yawn_counter = 0
         
         self.driver_status = "Normal"
+        
+        # Image sequence handling
+        self.image_files = config_args.get('image_files', [])
+        self.current_image_index = 0
+        self.is_image_sequence = len(self.image_files) > 0
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -118,7 +193,7 @@ class VideoThread(QThread):
         hide_labels = self.config_args.get('hide_labels', False)
         hide_conf = self.config_args.get('hide_conf', False)
         half = self.config_args.get('half', False)
-        weights = self.config_args.get('weights', ROOT / './weights/best.pt')
+        weights = self.config_args.get('weights', ROOT / './weights/last.pt')
         enable_dlib = self.config_args.get('enable_dlib', False)
         enable_yolo = self.config_args.get('enable_yolo', True)
         enable_mediapipe = self.config_args.get('enable_mediapipe', False)
@@ -158,137 +233,196 @@ class VideoThread(QThread):
         else: # MediaPipe가 비활성화된 경우 None으로 명시적 설정
             self.mediapipe_analyzer = None
 
-        cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_V4L2)
-        if not cap.isOpened():
-            print(f"Attempting with CAP_V4L2 failed. Retrying with default. Error: Could not open video source {source}")
-            cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_GSTREAMER)
+        # Handle image sequence vs video/webcam
+        if self.is_image_sequence:
+            print(f"[VideoThread] Processing image sequence with {len(self.image_files)} images")
+            self.process_image_sequence()
+        else:
+            # Original video/webcam processing
+            cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_V4L2)
             if not cap.isOpened():
-                print(f"Attempting with CAP_GSTREAMER failed. Retrying with default. Error: Could not open video source {source}")
-                cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+                print(f"Attempting with CAP_V4L2 failed. Retrying with default. Error: Could not open video source {source}")
+                cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_GSTREAMER)
                 if not cap.isOpened():
-                    print(f"Failed to open video source {source} with any specified backend.")
-                    self.is_running = False
-                    return
+                    print(f"Attempting with CAP_GSTREAMER failed. Retrying with default. Error: Could not open video source {source}")
+                    cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+                    if not cap.isOpened():
+                        print(f"Failed to open video source {source} with any specified backend.")
+                        self.is_running = False
+                        return
 
-        prev_frame_time = 0
-        while self.is_running and cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                print("End of stream or cannot read frame.")
-                break
+            prev_frame_time = 0
+            while self.is_running and cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    print("End of stream or cannot read frame.")
+                    break
 
-            im0 = frame.copy()
-            frame_h, frame_w, _ = im0.shape # 현재 프레임의 크기
+                im0 = frame.copy()
+                frame_h, frame_w, _ = im0.shape # 현재 프레임의 크기
 
-            # --- 1. YOLOv5 Detection ---
-            yolo_dets = torch.tensor([])
-            if enable_yolo and self.yolo_detector:
-                yolo_dets, _, _ = self.yolo_detector.detect(
-                    im0.copy(), conf_thres, iou_thres, None, False, max_det)
-            
-            # --- 2. Dlib Analysis ---
-            dlib_results = {}
-            if enable_dlib and self.dlib_analyzer:
-                dlib_results = self.dlib_analyzer.analyze_frame(im0.copy())
+                # Process frame with all analyzers
+                self.process_frame(im0, frame_h, frame_w, enable_yolo, enable_dlib, enable_mediapipe, 
+                                 conf_thres, iou_thres, max_det, hide_labels, hide_conf)
 
-                # --- Dlib 정면 캘리브레이션 트리거 처리 ---
-                if self.dlib_calibration_trigger:
-                    # 마우스 클릭이 감지되었고, 캘리브레이션 모드이며 Dlib이 얼굴을 감지했을 때
-                    if dlib_results.get("landmark_points") and len(dlib_results["landmark_points"]) > 0:
-                        # DlibAnalyzer에 현재 프레임의 랜드마크를 넘겨주어 캘리브레이션 수행
-                        calibrated_successfully = self.dlib_analyzer.calibrate_front_pose(
-                            (frame_h, frame_w), np.array(dlib_results["landmark_points"])
-                        )
-                        if calibrated_successfully:
-                            print("[VideoThread] Dlib front pose calibrated successfully.")
-                        else:
-                            print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
-                    else:
-                        print("[VideoThread] Dlib front pose calibration failed (no face detected).")
-                    self.dlib_calibration_trigger = False # 캘리브레이션 요청 초기화
-            
-            # --- 3. MediaPipe Analysis ---
-            mediapipe_results = {}
-            if enable_mediapipe and self.mediapipe_analyzer:
-                # 선택된 모드에 따라 다른 함수 호출
-                if self.mediapipe_analyzer.running_mode == vision.RunningMode.LIVE_STREAM:
-                    timestamp = int(time.time() * 1000)
-                    self.mediapipe_analyzer.detect_async(im0.copy(), timestamp)
-                    # 비동기 모드에서는 콜백에서 업데이트된 최신 결과를 사용
-                    mediapipe_results = self.mediapipe_analyzer._process_results(
-                        self.latest_face_result, self.latest_hand_result
-                    )
-                else: # VIDEO 모드 (동기)
-                    mediapipe_results = self.mediapipe_analyzer.analyze_frame(im0.copy())
-
-                # --- MediaPipe 정면 캘리브레이션 트리거 처리 ---
-                if self.mediapipe_calibration_trigger:
-                    if mediapipe_results.get("face_landmarks"):
-                        calibrated_successfully = self.mediapipe_analyzer.calibrate_front_pose(
-                            (frame_h, frame_w), mediapipe_results["face_landmarks"]
-                        )
-                        if calibrated_successfully:
-                            print("[VideoThread] MediaPipe front pose calibrated successfully.")
-                        else:
-                            print("[VideoThread] MediaPipe front pose calibration failed (no landmarks).")
-                    else:
-                        print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
-                    self.mediapipe_calibration_trigger = False # 캘리브레이션 요청 초기화
-
-            # --- 4. Visualization ---
-            if enable_yolo and self.yolo_detector:
-                im0 = self.visualizer_instance.draw_yolov5_results(im0, yolo_dets, self.yolo_detector.names, hide_labels, hide_conf)
-
-            if enable_dlib:
-                im0 = self.visualizer_instance.draw_dlib_results(im0, dlib_results)
-                is_calibrated_dlib = dlib_results.get("is_calibrated", False)
-                is_distracted_dlib = dlib_results.get("is_distracted_from_front", False)
-                im0 = self.visualizer_instance.draw_dlib_front_status(im0, is_calibrated_dlib, is_distracted_dlib)
-
-            if enable_mediapipe:
-                im0 = self.visualizer_instance.draw_mediapipe_results(im0, mediapipe_results)
-                is_calibrated_mp = mediapipe_results.get("is_calibrated", False)
-                is_distracted_mp = mediapipe_results.get("is_distracted_from_front", False)
-                im0 = self.visualizer_instance.draw_mediapipe_front_status(im0, is_calibrated_mp, is_distracted_mp)
-
-            # Calculate and Draw FPS
-            new_frame_time = time.time()
-            fps = 1/(new_frame_time-prev_frame_time) if (new_frame_time-prev_frame_time) > 0 else 0
-            prev_frame_time = new_frame_time
-            im0 = self.visualizer_instance.draw_fps(im0, fps)
-            
-            # --- 소켓 전송: 분석 결과를 전송 ---
-            # YOLO 결과를 사람이 읽을 수 있는 dict 리스트로 변환
-            yolo_results = []
-            if yolo_dets is not None and len(yolo_dets):
-                for det in yolo_dets.tolist():
-                    *xyxy, conf, cls = det
-                    yolo_results.append({
-                        'bbox': xyxy,
-                        'conf': conf,
-                        'class_id': int(cls),
-                        'class_name': self.yolo_detector.names[int(cls)]
-                    })
-            result_to_send = {
-                'yolo': yolo_results,
-                'dlib': dlib_results,
-                'mediapipe': mediapipe_results,
-                'status': self.driver_status
-            }
-            # print(f"result_to_send: {result_to_send}")
-            socket_sender.send_result_via_socket(result_to_send, self.config_args['socket_ip'], self.config_args['socket_port'])
-            
-            self.change_pixmap_signal.emit(im0)
-            # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
-
-        cap.release()
-        print("[VideoThread] Video capture released.")
+            cap.release()
+            print("[VideoThread] Video capture released.")
+        
         self.is_running = False
+
+    def process_image_sequence(self):
+        """Process a sequence of images without stretching"""
+        while self.is_running and self.current_image_index < len(self.image_files):
+            image_path = self.image_files[self.current_image_index]
+            
+            # Read image
+            frame = cv2.imread(image_path)
+            if frame is None:
+                print(f"Failed to read image: {image_path}")
+                self.current_image_index += 1
+                continue
+            
+            im0 = frame.copy()
+            frame_h, frame_w, _ = im0.shape
+            
+            # Process frame with all analyzers
+            self.process_frame(im0, frame_h, frame_w, 
+                             self.config_args.get('enable_yolo', True),
+                             self.config_args.get('enable_dlib', False),
+                             self.config_args.get('enable_mediapipe', False),
+                             self.config_args.get('conf_thres', 0.25),
+                             self.config_args.get('iou_thres', 0.45),
+                             self.config_args.get('max_det', 1),
+                             self.config_args.get('hide_labels', False),
+                             self.config_args.get('hide_conf', False))
+            
+            # Move to next image after a delay
+            time.sleep(2.0)  # 2 second delay between images
+            self.current_image_index += 1
+
+    def process_frame(self, im0, frame_h, frame_w, enable_yolo, enable_dlib, enable_mediapipe, 
+                     conf_thres, iou_thres, max_det, hide_labels, hide_conf):
+        """Process a single frame with all enabled analyzers"""
+        
+        # --- 1. YOLOv5 Detection ---
+        yolo_dets = torch.tensor([])
+        if enable_yolo and self.yolo_detector:
+            yolo_dets, _, _ = self.yolo_detector.detect(
+                im0.copy(), conf_thres, iou_thres, None, False, max_det)
+        
+        # --- 2. Dlib Analysis ---
+        dlib_results = {}
+        if enable_dlib and self.dlib_analyzer:
+            dlib_results = self.dlib_analyzer.analyze_frame(im0.copy())
+
+            # --- Dlib 정면 캘리브레이션 트리거 처리 ---
+            if self.dlib_calibration_trigger:
+                # 마우스 클릭이 감지되었고, 캘리브레이션 모드이며 Dlib이 얼굴을 감지했을 때
+                if dlib_results.get("landmark_points") and len(dlib_results["landmark_points"]) > 0:
+                    # DlibAnalyzer에 현재 프레임의 랜드마크를 넘겨주어 캘리브레이션 수행
+                    calibrated_successfully = self.dlib_analyzer.calibrate_front_pose(
+                        (frame_h, frame_w), np.array(dlib_results["landmark_points"])
+                    )
+                    if calibrated_successfully:
+                        print("[VideoThread] Dlib front pose calibrated successfully.")
+                    else:
+                        print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
+                else:
+                    print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                self.dlib_calibration_trigger = False # 캘리브레이션 요청 초기화
+        
+        # --- 3. MediaPipe Analysis ---
+        mediapipe_results = {}
+        if enable_mediapipe and self.mediapipe_analyzer:
+            # 선택된 모드에 따라 다른 함수 호출
+            if self.mediapipe_analyzer.running_mode == vision.RunningMode.LIVE_STREAM:
+                timestamp = int(time.time() * 1000)
+                self.mediapipe_analyzer.detect_async(im0.copy(), timestamp)
+                # 비동기 모드에서는 콜백에서 업데이트된 최신 결과를 사용
+                mediapipe_results = self.mediapipe_analyzer._process_results(
+                    self.latest_face_result, self.latest_hand_result
+                )
+            else: # VIDEO 모드 (동기)
+                mediapipe_results = self.mediapipe_analyzer.analyze_frame(im0.copy())
+
+            # --- MediaPipe 정면 캘리브레이션 트리거 처리 ---
+            if self.mediapipe_calibration_trigger:
+                if mediapipe_results.get("face_landmarks"):
+                    calibrated_successfully = self.mediapipe_analyzer.calibrate_front_pose(
+                        (frame_h, frame_w), mediapipe_results["face_landmarks"]
+                    )
+                    if calibrated_successfully:
+                        print("[VideoThread] MediaPipe front pose calibrated successfully.")
+                    else:
+                        print("[VideoThread] MediaPipe front pose calibration failed (no landmarks).")
+                else:
+                    print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
+                self.mediapipe_calibration_trigger = False # 캘리브레이션 요청 초기화
+
+        # --- 4. Visualization ---
+        if enable_yolo and self.yolo_detector:
+            im0 = self.visualizer_instance.draw_yolov5_results(im0, yolo_dets, self.yolo_detector.names, hide_labels, hide_conf)
+        
+        if enable_dlib and self.dlib_analyzer:
+            im0 = self.visualizer_instance.draw_dlib_results(im0, dlib_results)
+            # Add front face status display
+            is_calibrated_dlib = dlib_results.get("is_calibrated", False)
+            is_distracted_dlib = dlib_results.get("is_distracted_from_front", False)
+            im0 = self.visualizer_instance.draw_dlib_front_status(im0, is_calibrated_dlib, is_distracted_dlib)
+        
+        if enable_mediapipe and self.mediapipe_analyzer:
+            im0 = self.visualizer_instance.draw_mediapipe_results(im0, mediapipe_results)
+
+        # --- 5. Driver Status Analysis ---
+        if enable_dlib and dlib_results:
+            self.analyze_driver_status(dlib_results)
+        elif enable_mediapipe and mediapipe_results:
+            self.analyze_driver_status_mediapipe(mediapipe_results)
+
+        # --- 6. Socket Communication ---
+        # YOLO 결과를 사람이 읽을 수 있는 dict 리스트로 변환
+        yolo_results = []
+        if yolo_dets is not None and len(yolo_dets):
+            for det in yolo_dets.tolist():
+                *xyxy, conf, cls = det
+                cls_idx = int(cls)
+                # 클래스 인덱스 범위 체크
+                class_name = self.yolo_detector.names[cls_idx] if cls_idx < len(self.yolo_detector.names) else 'unknown'
+                yolo_results.append({
+                    'bbox': xyxy,
+                    'conf': conf,
+                    'class_id': cls_idx,
+                    'class_name': class_name
+                })
+
+        result_to_send = {
+            'yolo': yolo_results,
+            'dlib': dlib_results,
+            'mediapipe': mediapipe_results,
+            'status': self.driver_status
+        }
+        # print(f"result_to_send: {result_to_send}")
+        # Only send if enabled
+        if self.config_args.get('enable_socket_sending', True):
+            socket_sender.send_result_via_socket(result_to_send, self.config_args['socket_ip'], self.config_args['socket_port'])
+        
+        self.change_pixmap_signal.emit(im0)
+        # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
 
     def stop(self):
         self.is_running = False
         print("[VideoThread] Stopping video thread...")
         self.wait()
+
+    def analyze_driver_status(self, dlib_results):
+        """Analyze driver status using Dlib results"""
+        # This method can be implemented based on your existing driver status analysis logic
+        pass
+
+    def analyze_driver_status_mediapipe(self, mediapipe_results):
+        """Analyze driver status using MediaPipe results"""
+        # This method can be implemented based on your existing driver status analysis logic
+        pass
 
 
 class MainApp(QWidget):
@@ -329,6 +463,10 @@ class MainApp(QWidget):
         self.btn_stop.clicked.connect(self.stop_detection)
         self.btn_stop.setEnabled(False)
 
+        self.btn_next_image = QPushButton("Next Image")
+        self.btn_next_image.clicked.connect(self.next_image)
+        self.btn_next_image.setEnabled(False)
+
         self.chk_yolo = QCheckBox("Enable YOLOv5")
         self.chk_yolo.setChecked(True)
 
@@ -359,16 +497,6 @@ class MainApp(QWidget):
         # 초기에는 MediaPipe 활성화 여부에 따라 활성화/비활성화
         self.chk_set_mediapipe_front_face.setEnabled(self.chk_mediapipe.isChecked())
 
-        self.update_front_face_checkbox_states() # 초기 상태 설정
-
-        self.label_source = QLabel("Video Source (0 for webcam):")
-        self.txt_source = QLineEdit("0")
-
-        self.label_weights = QLabel("YOLOv5 Weights:")
-        self.txt_weights = QLineEdit(str(ROOT / 'weights' / 'best.pt'))
-        self.btn_browse_weights = QPushButton("Browse")
-        self.btn_browse_weights.clicked.connect(self.browse_weights)
-
         # 소켓 IP/Port 입력란 추가
         socket_layout = QHBoxLayout()
         self.label_socket_ip = QLabel("Socket IP:")
@@ -379,14 +507,33 @@ class MainApp(QWidget):
         socket_layout.addWidget(self.txt_socket_ip)
         socket_layout.addWidget(self.label_socket_port)
         socket_layout.addWidget(self.txt_socket_port)
+        
+        # --- Add socket send enable checkbox ---
+        self.chk_send_socket = QCheckBox("Send Data to Server")
+        self.chk_send_socket.setChecked(False)
+        socket_layout.addWidget(self.chk_send_socket)
+
+        self.update_front_face_checkbox_states() # 초기 상태 설정
+
+        self.label_source = QLabel("Video Source (0 for webcam):")
+        self.txt_source = DragDropLineEdit()
+        self.txt_source.setText("0")
+        self.btn_browse_source = QPushButton("Browse")
+        self.btn_browse_source.clicked.connect(self.browse_video_source)
+
+        self.label_weights = QLabel("YOLOv5 Weights:")
+        self.txt_weights = QLineEdit(str(ROOT / 'weights' / 'best.pt'))
+        self.btn_browse_weights = QPushButton("Browse")
+        self.btn_browse_weights.clicked.connect(self.browse_weights)
 
         control_layout.addWidget(self.btn_start)
         control_layout.addWidget(self.btn_stop)
+        control_layout.addWidget(self.btn_next_image)
         
         separator = QFrame()
         separator.setFrameShape(QFrame.VLine)
         separator.setFrameShadow(QFrame.Sunken)
-        control_layout.addWidget(separator) 
+        control_layout.addWidget(separator)
 
         control_layout.addWidget(self.chk_yolo)
         control_layout.addWidget(self.chk_dlib)
@@ -399,6 +546,7 @@ class MainApp(QWidget):
         source_weights_layout = QHBoxLayout()
         source_weights_layout.addWidget(self.label_source)
         source_weights_layout.addWidget(self.txt_source)
+        source_weights_layout.addWidget(self.btn_browse_source)
         source_weights_layout.addWidget(self.label_weights)
         source_weights_layout.addWidget(self.txt_weights)
         source_weights_layout.addWidget(self.btn_browse_weights)
@@ -415,6 +563,18 @@ class MainApp(QWidget):
         fileName, _ = QFileDialog.getOpenFileName(self, "Select YOLOv5 Weights File", "", "PyTorch Weights (*.pt);;All Files (*)", options=options)
         if fileName:
             self.txt_weights.setText(fileName)
+
+    def browse_video_source(self):
+        options = QFileDialog.Options()
+        fileName, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Select Video or Image File", 
+            "", 
+            "Video Files (*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.webm *.m4v);;Image Files (*.jpg *.jpeg *.png *.bmp *.tiff *.tif *.gif *.webp);;All Files (*)", 
+            options=options
+        )
+        if fileName:
+            self.txt_source.setText(fileName)
 
     def update_front_face_checkbox_states(self):
         # Dlib 활성화 여부에 따라 Dlib 정면 설정 체크박스 활성화/비활성화
@@ -450,6 +610,14 @@ class MainApp(QWidget):
         # 소켓 IP/Port 값 저장
         self.socket_ip = self.txt_socket_ip.text()
         self.socket_port = int(self.txt_socket_port.text())
+        
+        # Check if this is an image sequence
+        image_files = self.txt_source.get_image_files()
+        # 만약 source가 0(웹캠) 또는 비디오 파일이면 image_files를 비움
+        if self.txt_source.text().strip() == '0' or self.txt_source.text().strip().lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v')):
+            image_files = []
+        is_image_sequence = len(image_files) > 0
+        
         # VideoThread에 전달
         config_args = {
             'weights': Path(self.txt_weights.text()),
@@ -482,7 +650,11 @@ class MainApp(QWidget):
             'enable_mediapipe': self.chk_mediapipe.isChecked(),
             'mediapipe_mode': self.combo_mediapipe_mode.currentText(), # 선택된 모드 추가
             'socket_ip': self.socket_ip,
-            'socket_port': self.socket_port
+            'socket_port': self.socket_port,
+            'image_files': image_files,
+            'current_image_index': 0,
+            'is_image_sequence': is_image_sequence,
+            'enable_socket_sending': self.chk_send_socket.isChecked()  # 소켓 전송 활성화 여부 추가
         }
 
         if config_args['enable_dlib']:
@@ -509,6 +681,7 @@ class MainApp(QWidget):
 
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
+        self.btn_next_image.setEnabled(is_image_sequence)
 
     def stop_detection(self):
         if self.video_thread:
@@ -535,7 +708,14 @@ class MainApp(QWidget):
         label_height = self.image_label.height()
 
         pixmap = QPixmap.fromImage(convert_to_Qt_format)
-        scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        
+        # Check if this is an image sequence (not video/webcam)
+        if hasattr(self, 'video_thread') and self.video_thread and hasattr(self.video_thread, 'is_image_sequence') and self.video_thread.is_image_sequence:
+            # For images, don't stretch - keep aspect ratio and fit within label
+            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        else:
+            # For video/webcam, use the original scaling behavior
+            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
         self.image_label.setPixmap(scaled_pixmap)
 
@@ -604,6 +784,16 @@ class MainApp(QWidget):
     def closeEvent(self, event):
         self.stop_detection()
         super().closeEvent(event)
+
+    def next_image(self):
+        """Manually advance to the next image in the sequence"""
+        if self.video_thread and hasattr(self.video_thread, 'is_image_sequence') and self.video_thread.is_image_sequence:
+            if self.video_thread.current_image_index < len(self.video_thread.image_files) - 1:
+                self.video_thread.current_image_index += 1
+                # Force the thread to process the next image
+                self.video_thread.process_image_sequence()
+            else:
+                QMessageBox.information(self, "End of Sequence", "This is the last image in the sequence.")
 
 
 if __name__ == "__main__":

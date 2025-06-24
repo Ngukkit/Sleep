@@ -9,14 +9,14 @@ from detector_utils import calculate_ear, calculate_mar, get_head_pose
 
 # Constants for Drowsiness and Yawn detection
 EYE_AR_THRESH = 0.15
-EYE_AR_CONSEC_FRAMES = 20
+EYE_AR_CONSEC_FRAMES = 10
 MOUTH_AR_THRESH = 0.4
-MOUTH_AR_CONSEC_FRAMES = 30
+MOUTH_AR_CONSEC_FRAMES = 20
 
 # Head Pose Thresholds (degrees)
 # These thresholds will be used to compare current pose with calibrated front pose
-PITCH_THRESHOLD = 10.0 # Max up/down deviation from front
-YAW_THRESHOLD = 50.0   # Max left/right deviation from front
+PITCH_THRESHOLD = 15.0 # Max up/down deviation from front
+YAW_THRESHOLD = 60.0   # Max left/right deviation from front
 ROLL_THRESHOLD = 90.0  # Max tilt left/right deviation from front
 
 class DlibAnalyzer:
