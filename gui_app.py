@@ -112,7 +112,7 @@ class VideoThread(QThread):
         self.config_args = config_args
         self.is_running = True
         
-        self.visualizer_instance = visualizer.Visualizer() # Visualizer 객체를 여기서 한번만 생5성
+        self.visualizer_instance = visualizer.Visualizer() # Visualizer 객체를 여기서 한번만 생성
         self.yolo_detector = None
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
@@ -139,6 +139,8 @@ class VideoThread(QThread):
         self.image_files = config_args.get('image_files', [])
         self.current_image_index = 0
         self.is_image_sequence = len(self.image_files) > 0
+        # FPS timing
+        self.prev_frame_time = None
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -406,6 +408,14 @@ class VideoThread(QThread):
         if self.config_args.get('enable_socket_sending', True):
             socket_sender.send_result_via_socket(result_to_send, self.config_args['socket_ip'], self.config_args['socket_port'])
         
+        # --- FPS 계산 및 표시 ---
+        if self.prev_frame_time is None:
+            self.prev_frame_time = time.time()
+        new_frame_time = time.time()
+        fps = 1/(new_frame_time - self.prev_frame_time) if (new_frame_time - self.prev_frame_time) > 0 else 0
+        self.prev_frame_time = new_frame_time
+        im0 = self.visualizer_instance.draw_fps(im0, fps)
+
         self.change_pixmap_signal.emit(im0)
         # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
 
@@ -483,19 +493,19 @@ class MainApp(QWidget):
         self.combo_mediapipe_mode.setEnabled(self.chk_mediapipe.isChecked())
         self.chk_mediapipe.stateChanged.connect(self.combo_mediapipe_mode.setEnabled)
 
-        # Dlib 정면 설정 스위치 추가
-        self.chk_set_dlib_front_face = QCheckBox("Set Front Face (Dlib)")
-        self.chk_set_dlib_front_face.setChecked(False)
-        self.chk_set_dlib_front_face.stateChanged.connect(self.toggle_set_dlib_front_face_mode)
-        # 초기에는 Dlib 활성화 여부에 따라 활성화/비활성화
-        self.chk_set_dlib_front_face.setEnabled(self.chk_dlib.isChecked())
+        # 통합 캘리브레이션 버튼으로 변경
+        self.btn_calibrate = QPushButton("Calibrate Front Face")
+        self.btn_calibrate.setEnabled(False)
+        self.btn_calibrate.clicked.connect(self.toggle_calibration_mode)
+        self.is_calibration_mode = False
 
-        # MediaPipe 정면 설정 스위치 추가
-        self.chk_set_mediapipe_front_face = QCheckBox("Set Front Face (MediaPipe)")
-        self.chk_set_mediapipe_front_face.setChecked(False)
-        self.chk_set_mediapipe_front_face.stateChanged.connect(self.toggle_set_mediapipe_front_face_mode)
-        # 초기에는 MediaPipe 활성화 여부에 따라 활성화/비활성화
-        self.chk_set_mediapipe_front_face.setEnabled(self.chk_mediapipe.isChecked())
+        # 설정 편집 버튼 추가
+        self.btn_config = QPushButton("Edit Config")
+        self.btn_config.clicked.connect(self.open_config_editor)
+
+        # 설정 다시 로드 버튼 추가
+        self.btn_reload_config = QPushButton("Reload Config")
+        self.btn_reload_config.clicked.connect(self.reload_config)
 
         # 소켓 IP/Port 입력란 추가
         socket_layout = QHBoxLayout()
@@ -539,8 +549,9 @@ class MainApp(QWidget):
         control_layout.addWidget(self.chk_dlib)
         control_layout.addWidget(self.chk_mediapipe)
         control_layout.addWidget(self.combo_mediapipe_mode)
-        control_layout.addWidget(self.chk_set_dlib_front_face)
-        control_layout.addWidget(self.chk_set_mediapipe_front_face)
+        control_layout.addWidget(self.btn_calibrate)
+        control_layout.addWidget(self.btn_config)
+        control_layout.addWidget(self.btn_reload_config)
         control_layout.addStretch()
 
         source_weights_layout = QHBoxLayout()
@@ -577,18 +588,14 @@ class MainApp(QWidget):
             self.txt_source.setText(fileName)
 
     def update_front_face_checkbox_states(self):
-        # Dlib 활성화 여부에 따라 Dlib 정면 설정 체크박스 활성화/비활성화
-        self.chk_set_dlib_front_face.setEnabled(self.chk_dlib.isChecked())
-        # Dlib이 꺼지면 캘리브레이션 체크도 해제
-        if not self.chk_dlib.isChecked():
-            self.chk_set_dlib_front_face.setChecked(False)
-
-        # MediaPipe 활성화 여부에 따라 MediaPipe 정면 설정 체크박스 활성화/비활성화
-        self.chk_set_mediapipe_front_face.setEnabled(self.chk_mediapipe.isChecked())
-        if not self.chk_mediapipe.isChecked():
-            self.chk_set_mediapipe_front_face.setChecked(False)
-
-        # (추가) 모든 모델은 독립적으로 활성화 가능하게 별도 제약 없음
+        """캘리브레이션 버튼 활성화 상태 업데이트"""
+        # dlib 또는 mediapipe 중 하나라도 활성화되어 있으면 캘리브레이션 버튼 활성화
+        self.btn_calibrate.setEnabled(self.chk_dlib.isChecked() or self.chk_mediapipe.isChecked())
+        
+        # 캘리브레이션 모드가 활성화되어 있는데 해당 분석기가 비활성화되면 캘리브레이션 모드도 해제
+        if self.is_calibration_mode:
+            if not self.chk_dlib.isChecked() and not self.chk_mediapipe.isChecked():
+                self.toggle_calibration_mode()  # 캘리브레이션 모드 해제
 
     def start_detection(self):
         if self.video_thread and self.video_thread.isRunning():
@@ -596,15 +603,15 @@ class MainApp(QWidget):
             return
 
         # Dlib 정면 설정 모드가 켜져 있는데 Dlib이 비활성화된 경우
-        if self.chk_set_dlib_front_face.isChecked() and not self.chk_dlib.isChecked():
+        if self.is_set_dlib_front_face_mode and not self.chk_dlib.isChecked():
             QMessageBox.warning(self, "Warning", "To use 'Set Front Face (Dlib)', Dlib must be enabled.")
-            self.chk_set_dlib_front_face.setChecked(False) 
+            self.is_set_dlib_front_face_mode = False 
             return
         
         # MediaPipe 정면 설정 모드가 켜져 있는데 MediaPipe가 비활성화된 경우
-        if self.chk_set_mediapipe_front_face.isChecked() and not self.chk_mediapipe.isChecked():
+        if self.is_set_mediapipe_front_face_mode and not self.chk_mediapipe.isChecked():
             QMessageBox.warning(self, "Warning", "To use 'Set Front Face (MediaPipe)', MediaPipe must be enabled.")
-            self.chk_set_mediapipe_front_face.setChecked(False)
+            self.is_set_mediapipe_front_face_mode = False
             return
 
         # 소켓 IP/Port 값 저장
@@ -727,59 +734,94 @@ class MainApp(QWidget):
         scaled_img = convert_to_Qt_format.scaled(self.image_label.width(), self.image_label.height(), Qt.KeepAspectRatio)
         return QPixmap.fromImage(scaled_img)
 
-    def toggle_set_dlib_front_face_mode(self, state):
-        self.is_set_dlib_front_face_mode = bool(state)
-        # MediaPipe 모드가 켜져 있다면, 둘 중 하나만 선택되도록 처리
-        if self.is_set_dlib_front_face_mode and self.chk_set_mediapipe_front_face.isChecked():
-            self.chk_set_mediapipe_front_face.setChecked(False)
-
-        if self.video_thread: # 스레드가 실행 중이면 스레드에도 상태 전달
-            self.video_thread.set_dlib_front_face_mode = self.is_set_dlib_front_face_mode
-
-        if self.is_set_dlib_front_face_mode:
-            if not self.chk_dlib.isChecked():
-                QMessageBox.warning(self, "Warning", "To use 'Set Front Face (Dlib)', Dlib must be enabled.")
-                self.chk_set_dlib_front_face.setChecked(False) 
-                self.is_set_dlib_front_face_mode = False
-                return
-            QMessageBox.information(self, "Set Front Face (Dlib)", "Click on the video feed while looking straight to calibrate Dlib front face.")
+    def toggle_calibration_mode(self):
+        """통합 캘리브레이션 모드 토글"""
+        self.is_calibration_mode = not self.is_calibration_mode
+        
+        if self.is_calibration_mode:
+            # 캘리브레이션 모드 활성화
+            self.btn_calibrate.setText("Cancel Calibration")
+            self.btn_calibrate.setStyleSheet("background-color: #ff6b6b; color: white;")
+            
+            # 활성화된 분석기에 따라 캘리브레이션 모드 설정
+            if self.chk_dlib.isChecked():
+                self.is_set_dlib_front_face_mode = True
+                if self.video_thread:
+                    self.video_thread.set_dlib_front_face_mode = True
+                    
+            if self.chk_mediapipe.isChecked():
+                self.is_set_mediapipe_front_face_mode = True
+                if self.video_thread:
+                    self.video_thread.set_mediapipe_front_face_mode = True
+                    
         else:
-            QMessageBox.information(self, "Set Front Face (Dlib)", "Dlib front face setting mode is off.")
-
-    def toggle_set_mediapipe_front_face_mode(self, state):
-        self.is_set_mediapipe_front_face_mode = bool(state)
-        # Dlib 모드가 켜져 있다면, 둘 중 하나만 선택되도록 처리
-        if self.is_set_mediapipe_front_face_mode and self.chk_set_dlib_front_face.isChecked():
-            self.chk_set_dlib_front_face.setChecked(False)
-
-        if self.video_thread: # 스레드가 실행 중이면 스레드에도 상태 전달
-            self.video_thread.set_mediapipe_front_face_mode = self.is_set_mediapipe_front_face_mode
-
-        if self.is_set_mediapipe_front_face_mode:
-            if not self.chk_mediapipe.isChecked():
-                QMessageBox.warning(self, "Warning", "To use 'Set Front Face (MediaPipe)', MediaPipe must be enabled.")
-                self.chk_set_mediapipe_front_face.setChecked(False) 
-                self.is_set_mediapipe_front_face_mode = False
-                return
-            QMessageBox.information(self, "Set Front Face (MediaPipe)", "Click on the video feed while looking straight to calibrate MediaPipe front face.")
-        else:
-            QMessageBox.information(self, "Set Front Face (MediaPipe)", "MediaPipe front face setting mode is off.")
+            # 캘리브레이션 모드 비활성화
+            self.btn_calibrate.setText("Calibrate Front Face")
+            self.btn_calibrate.setStyleSheet("")
+            
+            # 모든 캘리브레이션 모드 해제
+            self.is_set_dlib_front_face_mode = False
+            self.is_set_mediapipe_front_face_mode = False
+            
+            if self.video_thread:
+                self.video_thread.set_dlib_front_face_mode = False
+                self.video_thread.set_mediapipe_front_face_mode = False
 
     def image_label_mouse_press_event(self, event):
-        # Dlib 정면 설정 모드가 활성화되어 있을 때
-        if self.is_set_dlib_front_face_mode and self.chk_dlib.isChecked() and self.video_thread and self.video_thread.isRunning():
-            if event.button() == Qt.LeftButton:
-                print("Mouse clicked to trigger Dlib calibration.")
+        """통합 캘리브레이션 모드에서 마우스 클릭 처리"""
+        if not self.is_calibration_mode or not self.video_thread or not self.video_thread.isRunning():
+            return
+            
+        if event.button() == Qt.LeftButton:
+            print("Mouse clicked to trigger calibration.")
+            
+            # 활성화된 분석기에 따라 캘리브레이션 트리거 설정
+            if self.chk_dlib.isChecked() and self.is_set_dlib_front_face_mode:
                 self.video_thread.dlib_calibration_trigger = True
-                QMessageBox.information(self, "Calibration Triggered", "Dlib front face calibration requested. Please look straight at the camera.")
-        
-        # MediaPipe 정면 설정 모드가 활성화되어 있을 때
-        elif self.is_set_mediapipe_front_face_mode and self.chk_mediapipe.isChecked() and self.video_thread and self.video_thread.isRunning():
-            if event.button() == Qt.LeftButton:
-                print("Mouse clicked to trigger MediaPipe calibration.")
+                print("Dlib calibration triggered.")
+                
+            if self.chk_mediapipe.isChecked() and self.is_set_mediapipe_front_face_mode:
                 self.video_thread.mediapipe_calibration_trigger = True
-                QMessageBox.information(self, "Calibration Triggered", "MediaPipe front face calibration requested. Please look straight at the camera.")
+                print("MediaPipe calibration triggered.")
 
+    def open_config_editor(self):
+        """설정 편집기를 엽니다."""
+        try:
+            from config_manager import config_manager
+            
+            # 현재 설정을 표시
+            config_manager.print_config()
+            
+            # 설정 파일을 텍스트 에디터로 열기
+            import subprocess
+            import platform
+            import os
+            
+            config_file_path = config_manager.config_file.absolute()
+            
+            if platform.system() == "Windows":
+                subprocess.run(["notepad", str(config_file_path)])
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.run(["open", "-t", str(config_file_path)])
+            else:  # Linux
+                # Linux에서 텍스트 에디터 우선순위로 시도
+                editors = ["gedit", "nano", "vim", "mousepad", "leafpad", "kate", "geany"]
+                
+                for editor in editors:
+                    try:
+                        # 에디터가 설치되어 있는지 확인
+                        result = subprocess.run(["which", editor], capture_output=True, text=True)
+                        if result.returncode == 0:
+                            subprocess.run([editor, str(config_file_path)])
+                            break
+                    except:
+                        continue
+                else:
+                    # 모든 에디터가 실패하면 xdg-open 사용
+                    subprocess.run(["xdg-open", str(config_file_path)])
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"설정 편집기를 열 수 없습니다: {e}")
 
     def closeEvent(self, event):
         self.stop_detection()
@@ -794,6 +836,28 @@ class MainApp(QWidget):
                 self.video_thread.process_image_sequence()
             else:
                 QMessageBox.information(self, "End of Sequence", "This is the last image in the sequence.")
+
+    def reload_config(self):
+        """설정을 다시 로드합니다."""
+        try:
+            from config_manager import config_manager
+            
+            # 설정 파일 다시 로드
+            config_manager.reload()
+            
+            # 성공 메시지 표시
+            QMessageBox.information(
+                self, 
+                "Configuration Reloaded", 
+                "설정 파일이 성공적으로 다시 로드되었습니다.\n"
+                "변경사항이 즉시 적용됩니다."
+            )
+            
+            print("Configuration reloaded successfully")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"설정을 다시 로드할 수 없습니다: {e}")
+            print(f"Error reloading config: {e}")
 
 
 if __name__ == "__main__":
