@@ -8,24 +8,32 @@ import time
 
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from config_manager import get_mediapipe_config
 
-EYE_BLINK_THRESHOLD = 0.5
-JAW_OPEN_THRESHOLD = 0.4
-DROWSY_CONSEC_FRAMES = 15
-YAWN_CONSEC_FRAMES = 10
-PITCH_DOWN_THRESHOLD = 10
-PITCH_UP_THRESHOLD = -15
-POSE_CONSEC_FRAMES = 20
-GAZE_VECTOR_THRESHOLD = 0.5
+# Constants - now loaded from config
+EYE_BLINK_THRESHOLD = get_mediapipe_config("eye_blink_threshold", 0.3)
+JAW_OPEN_THRESHOLD = get_mediapipe_config("jaw_open_threshold", 0.4)
+DROWSY_CONSEC_FRAMES = get_mediapipe_config("drowsy_consec_frames", 15)
+YAWN_CONSEC_FRAMES = get_mediapipe_config("yawn_consec_frames", 30)
+PITCH_DOWN_THRESHOLD = get_mediapipe_config("pitch_down_threshold", 10)
+PITCH_UP_THRESHOLD = get_mediapipe_config("pitch_up_threshold", -15)
+POSE_CONSEC_FRAMES = get_mediapipe_config("pose_consec_frames", 20)
+GAZE_VECTOR_THRESHOLD = get_mediapipe_config("gaze_vector_threshold", 0.5)
 
-# GUI 호환성을 위한 추가 상수들
-MP_YAW_THRESHOLD = 30.0  # 좌우 회전은 30도까지 허용
-MP_PITCH_THRESHOLD = 10.0  # 고개 숙임/들기는 더 민감하게 (8도)
-MP_ROLL_THRESHOLD = 999.0  # roll은 거의 무시 (매우 큰 값)
-GAZE_THRESHOLD = 0.5
-DISTRACTION_CONSEC_FRAMES = 10
+# GUI 호환성을 위한 추가 상수들 - now loaded from config
+MP_YAW_THRESHOLD = get_mediapipe_config("mp_yaw_threshold", 30.0)
+MP_PITCH_THRESHOLD = get_mediapipe_config("mp_pitch_threshold", 10.0)
+MP_ROLL_THRESHOLD = get_mediapipe_config("mp_roll_threshold", 999.0)
+GAZE_THRESHOLD = get_mediapipe_config("gaze_threshold", 0.5)
+DISTRACTION_CONSEC_FRAMES = get_mediapipe_config("distraction_consec_frames", 10)
 
-TRUE_PITCH_THRESHOLD = 10.0  # true_pitch가 이 값 이상이면 고개 숙임으로 간주
+# Hand detection sensitivity
+MIN_HAND_DETECTION_CONFIDENCE = get_mediapipe_config("min_hand_detection_confidence", 0.3)
+MIN_HAND_PRESENCE_CONFIDENCE = get_mediapipe_config("min_hand_presence_confidence", 0.3)
+HAND_OFF_CONSEC_FRAMES = get_mediapipe_config("hand_off_consec_frames", 5)
+
+TRUE_PITCH_THRESHOLD = get_mediapipe_config("true_pitch_threshold", 10.0)
+HEAD_ROTATION_THRESHOLD_FOR_GAZE = get_mediapipe_config("head_rotation_threshold_for_gaze", 15.0)
 
 class MediaPipeAnalyzer:
     def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None):
@@ -88,6 +96,8 @@ class MediaPipeAnalyzer:
                 if running_mode == vision.RunningMode.LIVE_STREAM
                 else None,
                 num_hands=2,
+                min_hand_detection_confidence=MIN_HAND_DETECTION_CONFIDENCE,
+                min_hand_presence_confidence=MIN_HAND_PRESENCE_CONFIDENCE,
             )
             self.hand_landmarker = vision.HandLandmarker.create_from_options(hand_options)
 
@@ -99,6 +109,7 @@ class MediaPipeAnalyzer:
         ) = 0, 0, 0
         self.head_up_frame_count, self.gaze_deviated_frame_count = 0, 0
         self.left_hand_off_frame_count, self.right_hand_off_frame_count = 0, 0
+        self.distraction_frame_counter = 0  # Add distraction frame counter for consecutive detection
         print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
 
     def close(self):
@@ -325,14 +336,22 @@ class MediaPipeAnalyzer:
                 results["mp_head_yaw_deg"] = current_yaw
                 results["mp_head_roll_deg"] = current_roll
                 
-                # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                # 정면 이탈 감지 (운전 상황에 맞게 조정) - pitch 제외하고 연속 프레임 카운터 사용
                 if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                    abs(current_pitch) > MP_PITCH_THRESHOLD):
-                    results["is_distracted_from_front"] = True
-                    results["mp_is_distracted_from_front"] = True
-                    print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
+                    self.distraction_frame_counter += 1
+                    if self.distraction_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+                        results["is_distracted_from_front"] = True
+                        results["mp_is_distracted_from_front"] = True
+                        print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
                 else:
-                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
+                    self.distraction_frame_counter = 0  # Reset counter when not distracted
+                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
+                
+                # Pitch는 즉시 감지 (기존 로직 유지)
+                if abs(current_pitch) > MP_PITCH_THRESHOLD:
+                    results["is_head_down"] = True
+                    print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
                 
                 # Gaze 계산 (간단한 방식)
                 # 눈동자 위치를 기반으로 gaze 계산
@@ -372,20 +391,135 @@ class MediaPipeAnalyzer:
                 else:
                     pass
                 
-                # 졸음/하품 감지 (간단한 방식)
-                # 눈 크기로 졸음 감지
-                left_eye_height = abs(face_landmarks.landmark[159].y - face_landmarks.landmark[145].y)
-                right_eye_height = abs(face_landmarks.landmark[386].y - face_landmarks.landmark[374].y)
-                avg_eye_height = (left_eye_height + right_eye_height) / 2
+                # Head pose compensation for gaze detection
+                # 고개 회전을 보정하여 실제 시선 방향 계산
+                if face_result.facial_transformation_matrixes:
+                    head_pose = self._get_head_pose_from_matrix(
+                        face_result.facial_transformation_matrixes[0]
+                    )
+                    pitch, yaw, roll = head_pose
+                    
+                    # 고개 회전 각도를 라디안으로 변환
+                    yaw_rad = np.radians(yaw)
+                    pitch_rad = np.radians(pitch)
+                    
+                    # 고개 회전을 보정한 gaze 계산
+                    # Yaw 회전 보정 (좌우 회전)
+                    compensated_gaze_x = gaze_x * np.cos(yaw_rad) - gaze_y * np.sin(yaw_rad)
+                    compensated_gaze_y = gaze_x * np.sin(yaw_rad) + gaze_y * np.cos(yaw_rad)
+                    
+                    # Pitch 회전 보정 (상하 회전) - 간단한 근사
+                    compensated_gaze_y = compensated_gaze_y * np.cos(pitch_rad)
+                    
+                    # 보정된 gaze 값 저장
+                    results["compensated_gaze_x"] = compensated_gaze_x
+                    results["compensated_gaze_y"] = compensated_gaze_y
+                    
+                    # 간단한 해결책: 고개가 많이 돌아가면 gaze 감지 비활성화
+                    if abs(yaw) < HEAD_ROTATION_THRESHOLD_FOR_GAZE:
+                        # 고개가 거의 정면일 때만 gaze 감지
+                        gaze_diff = abs(gaze_x - self.calibrated_gaze_x)
+                        if gaze_diff > GAZE_THRESHOLD:
+                            results["is_gaze_compensated"] = True
+                            results["is_gaze"] = True
+                        else:
+                            results["is_gaze_compensated"] = False
+                            results["is_gaze"] = False
+                    else:
+                        # 고개가 많이 돌아가면 gaze 감지 비활성화
+                        results["is_gaze_compensated"] = False
+                        results["is_gaze"] = False
+                        results["gaze_disabled_due_to_head_rotation"] = True
+                    
+                    print(f"[DEBUG] Gaze compensation: raw({gaze_x:.3f}, {gaze_y:.3f}) -> compensated({compensated_gaze_x:.3f}, {compensated_gaze_y:.3f})")
+                    print(f"[DEBUG] Head pose for compensation: yaw={yaw:.1f}°, pitch={pitch:.1f}°")
+                    print(f"[DEBUG] Gaze detection: {'enabled' if abs(yaw) < HEAD_ROTATION_THRESHOLD_FOR_GAZE else 'disabled (head rotated)'}")
                 
-                if avg_eye_height < 0.02:  # 임계값 조정 필요
-                    results["is_drowsy"] = True
+                gaze_magnitude = np.sqrt(gaze_x**2 + gaze_y**2)
+                self.gaze_deviated_frame_count = (
+                    self.gaze_deviated_frame_count + 1
+                    if gaze_magnitude > GAZE_VECTOR_THRESHOLD
+                    else 0
+                )
+                if self.gaze_deviated_frame_count >= POSE_CONSEC_FRAMES:
+                    results["is_gaze_deviated"] = True
+                    
+            if face_result.facial_transformation_matrixes:
+                head_pose = self._get_head_pose_from_matrix(
+                    face_result.facial_transformation_matrixes[0]
+                )
+                results["head_pose"] = head_pose
+                pitch, yaw, roll = head_pose
                 
-                # 입 크기로 하품 감지
-                mouth_height = abs(face_landmarks.landmark[13].y - face_landmarks.landmark[14].y)
-                if mouth_height > 0.05:  # 임계값 조정 필요
-                    results["is_yawning"] = True
-        
+                # 방금 캘리브레이션 완료된 경우 현재 head pose 값을 캘리브레이션 오프셋으로 설정
+                if self.just_calibrated:
+                    self.mp_front_face_offset_pitch = -pitch
+                    self.mp_front_face_offset_yaw = -yaw
+                    self.mp_front_face_offset_roll = -roll
+                    self.just_calibrated = False  # 플래그 초기화 (gaze와 head pose 모두 처리 후)
+                    print(f"[MediaPipeAnalyzer] Head pose offsets updated after calibration: pitch={-pitch:.1f}, yaw={-yaw:.1f}, roll={-roll:.1f}")
+                
+                # 캘리브레이션된 오프셋 적용
+                current_pitch = pitch + self.mp_front_face_offset_pitch
+                current_yaw = yaw + self.mp_front_face_offset_yaw
+                current_roll = roll + self.mp_front_face_offset_roll
+                
+                # 디버깅 출력 (캘리브레이션 상태 확인)
+                print(f"[DEBUG] Head pose: raw(pitch={pitch:.1f}, yaw={yaw:.1f}, roll={roll:.1f})")
+                print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
+                print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
+                
+                results["mp_head_pitch_deg"] = current_pitch
+                results["mp_head_yaw_deg"] = current_yaw
+                results["mp_head_roll_deg"] = current_roll
+                
+                # 정면 이탈 감지 (운전 상황에 맞게 조정) - pitch 제외하고 연속 프레임 카운터 사용
+                if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                    abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
+                    self.distraction_frame_counter += 1
+                    if self.distraction_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+                        results["is_distracted_from_front"] = True
+                        results["mp_is_distracted_from_front"] = True
+                        print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
+                else:
+                    self.distraction_frame_counter = 0  # Reset counter when not distracted
+                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
+                
+                # Pitch는 즉시 감지 (기존 로직 유지)
+                if abs(current_pitch) > MP_PITCH_THRESHOLD:
+                    results["is_head_down"] = True
+                    print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+        else:
+            results["is_distracted_no_face"] = True
+
+        is_left_hand_on_wheel, is_right_hand_on_wheel = False, False
+        if hand_result and hand_result.hand_landmarks:
+            for i, handedness_list in enumerate(hand_result.handedness):
+                handedness, landmarks = (
+                    handedness_list[0].category_name,
+                    hand_result.hand_landmarks[i],
+                )
+                wrist = landmarks[mp.solutions.hands.HandLandmark.WRIST]
+                if handedness == "Left":
+                    results["left_hand_landmarks"] = landmarks
+                    if 0.2 < wrist.x < 0.6 and 0.5 < wrist.y < 1.0:
+                        is_left_hand_on_wheel = True
+                elif handedness == "Right":
+                    results["right_hand_landmarks"] = landmarks
+                    if 0.4 < wrist.x < 0.8 and 0.5 < wrist.y < 1.0:
+                        is_right_hand_on_wheel = True
+
+        self.left_hand_off_frame_count = (
+            0 if is_left_hand_on_wheel else self.left_hand_off_frame_count + 1
+        )
+        if self.left_hand_off_frame_count >= POSE_CONSEC_FRAMES:
+            results["is_left_hand_off"] = True
+        self.right_hand_off_frame_count = (
+            0 if is_right_hand_on_wheel else self.right_hand_off_frame_count + 1
+        )
+        if self.right_hand_off_frame_count >= POSE_CONSEC_FRAMES:
+            results["is_right_hand_off"] = True
+
         return results
 
     def _get_head_pose_from_matrix(self, transformation_matrix):
@@ -547,6 +681,50 @@ class MediaPipeAnalyzer:
                 else:
                     pass
                 
+                # Head pose compensation for gaze detection
+                # 고개 회전을 보정하여 실제 시선 방향 계산
+                if face_result.facial_transformation_matrixes:
+                    head_pose = self._get_head_pose_from_matrix(
+                        face_result.facial_transformation_matrixes[0]
+                    )
+                    pitch, yaw, roll = head_pose
+                    
+                    # 고개 회전 각도를 라디안으로 변환
+                    yaw_rad = np.radians(yaw)
+                    pitch_rad = np.radians(pitch)
+                    
+                    # 고개 회전을 보정한 gaze 계산
+                    # Yaw 회전 보정 (좌우 회전)
+                    compensated_gaze_x = gaze_x * np.cos(yaw_rad) - gaze_y * np.sin(yaw_rad)
+                    compensated_gaze_y = gaze_x * np.sin(yaw_rad) + gaze_y * np.cos(yaw_rad)
+                    
+                    # Pitch 회전 보정 (상하 회전) - 간단한 근사
+                    compensated_gaze_y = compensated_gaze_y * np.cos(pitch_rad)
+                    
+                    # 보정된 gaze 값 저장
+                    results["compensated_gaze_x"] = compensated_gaze_x
+                    results["compensated_gaze_y"] = compensated_gaze_y
+                    
+                    # 간단한 해결책: 고개가 많이 돌아가면 gaze 감지 비활성화
+                    if abs(yaw) < HEAD_ROTATION_THRESHOLD_FOR_GAZE:
+                        # 고개가 거의 정면일 때만 gaze 감지
+                        gaze_diff = abs(gaze_x - self.calibrated_gaze_x)
+                        if gaze_diff > GAZE_THRESHOLD:
+                            results["is_gaze_compensated"] = True
+                            results["is_gaze"] = True
+                        else:
+                            results["is_gaze_compensated"] = False
+                            results["is_gaze"] = False
+                    else:
+                        # 고개가 많이 돌아가면 gaze 감지 비활성화
+                        results["is_gaze_compensated"] = False
+                        results["is_gaze"] = False
+                        results["gaze_disabled_due_to_head_rotation"] = True
+                    
+                    print(f"[DEBUG] Gaze compensation: raw({gaze_x:.3f}, {gaze_y:.3f}) -> compensated({compensated_gaze_x:.3f}, {compensated_gaze_y:.3f})")
+                    print(f"[DEBUG] Head pose for compensation: yaw={yaw:.1f}°, pitch={pitch:.1f}°")
+                    print(f"[DEBUG] Gaze detection: {'enabled' if abs(yaw) < HEAD_ROTATION_THRESHOLD_FOR_GAZE else 'disabled (head rotated)'}")
+                
                 gaze_magnitude = np.sqrt(gaze_x**2 + gaze_y**2)
                 self.gaze_deviated_frame_count = (
                     self.gaze_deviated_frame_count + 1
@@ -585,57 +763,57 @@ class MediaPipeAnalyzer:
                 results["mp_head_yaw_deg"] = current_yaw
                 results["mp_head_roll_deg"] = current_roll
                 
-                # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                # 정면 이탈 감지 (운전 상황에 맞게 조정) - pitch 제외하고 연속 프레임 카운터 사용
                 if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                    abs(current_pitch) > MP_PITCH_THRESHOLD):
-                    results["is_distracted_from_front"] = True
-                    results["mp_is_distracted_from_front"] = True
-                    print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
+                    self.distraction_frame_counter += 1
+                    if self.distraction_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+                        results["is_distracted_from_front"] = True
+                        results["mp_is_distracted_from_front"] = True
+                        print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
                 else:
-                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
+                    self.distraction_frame_counter = 0  # Reset counter when not distracted
+                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
                 
-                self.head_down_frame_count = (
-                    self.head_down_frame_count + 5
-                    if pitch > PITCH_DOWN_THRESHOLD
-                    else 0
-                )
-                if self.head_down_frame_count >= POSE_CONSEC_FRAMES:
+                # Pitch는 즉시 감지 (기존 로직 유지)
+                if abs(current_pitch) > MP_PITCH_THRESHOLD:
                     results["is_head_down"] = True
-                self.head_up_frame_count = (
-                    self.head_up_frame_count + 1 if pitch < PITCH_UP_THRESHOLD else 0
-                )
-                if self.head_up_frame_count >= POSE_CONSEC_FRAMES:
-                    results["is_head_up"] = True
+                    print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
         else:
             results["is_distracted_no_face"] = True
 
-        is_left_hand_on_wheel, is_right_hand_on_wheel = False, False
+        # --- Hand Analysis ---
+        # If a hand is detected, it's considered off the wheel.
+        results["is_left_hand_off"] = False
+        results["is_right_hand_off"] = False
+        
+        is_left_hand_detected = False
+        is_right_hand_detected = False
+
         if hand_result and hand_result.hand_landmarks:
             for i, handedness_list in enumerate(hand_result.handedness):
                 handedness, landmarks = (
                     handedness_list[0].category_name,
                     hand_result.hand_landmarks[i],
                 )
-                wrist = landmarks[mp.solutions.hands.HandLandmark.WRIST]
                 if handedness == "Left":
                     results["left_hand_landmarks"] = landmarks
-                    if 0.2 < wrist.x < 0.6 and 0.5 < wrist.y < 1.0:
-                        is_left_hand_on_wheel = True
+                    is_left_hand_detected = True
                 elif handedness == "Right":
                     results["right_hand_landmarks"] = landmarks
-                    if 0.4 < wrist.x < 0.8 and 0.5 < wrist.y < 1.0:
-                        is_right_hand_on_wheel = True
+                    is_right_hand_detected = True
+        
+        # Consecutive frame logic for hand-off detection
+        self.left_hand_off_frame_count = self.left_hand_off_frame_count + 1 if is_left_hand_detected else 0
+        self.right_hand_off_frame_count = self.right_hand_off_frame_count + 1 if is_right_hand_detected else 0
 
-        self.left_hand_off_frame_count = (
-            0 if is_left_hand_on_wheel else self.left_hand_off_frame_count + 1
-        )
-        if self.left_hand_off_frame_count >= POSE_CONSEC_FRAMES:
+        if self.left_hand_off_frame_count >= HAND_OFF_CONSEC_FRAMES:
             results["is_left_hand_off"] = True
-        self.right_hand_off_frame_count = (
-            0 if is_right_hand_on_wheel else self.right_hand_off_frame_count + 1
-        )
-        if self.right_hand_off_frame_count >= POSE_CONSEC_FRAMES:
+        if self.right_hand_off_frame_count >= HAND_OFF_CONSEC_FRAMES:
             results["is_right_hand_off"] = True
+            
+        # This will be used by the visualizer
+        results["are_both_hands_on_wheel"] = not (results["is_left_hand_off"] or results["is_right_hand_off"])
 
         return results
 
