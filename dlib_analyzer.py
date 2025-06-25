@@ -186,7 +186,11 @@ class DlibAnalyzer:
             "is_drowsy_ear": False,
             "is_yawning": False,
             "is_distracted_from_front": False, # New status for front face check
-            "is_calibrated": self.is_calibrated # Pass calibration status to visualizer
+            "is_calibrated": self.is_calibrated, # Pass calibration status to visualizer
+            "is_head_down": False,  # Head down detection
+            # 위험 상태 감지 필드들
+            "is_dangerous_condition": False,  # 눈 감음 + 고개 숙임
+            "dangerous_condition_message": ""
         }
 
         if len(rects) > 0:
@@ -263,6 +267,12 @@ class DlibAnalyzer:
                     self.distraction_frame_counter = 0  # Reset counter when not distracted
             else:
                 results["head_pose_color"] = (100, 100, 100) # Grey if not calibrated
+            
+            # 위험 상태 감지: 눈을 감은 상태에서 고개가 숙여지는 경우
+            if results["is_drowsy_ear"] and results["is_head_down"]:
+                results["is_dangerous_condition"] = True
+                results["dangerous_condition_message"] = "DANGER: Eyes Closed + Head Down!"
+                print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
         else:
             # 얼굴이 인식되지 않을 때 연속 프레임 카운터 사용
             self.no_face_frame_counter += 1

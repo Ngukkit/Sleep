@@ -92,6 +92,13 @@ class Visualizer:
         mouth_color = dlib_results.get("mouth_color", (100, 100, 100))
         head_pose_color = dlib_results.get("head_pose_color", (100, 100, 100))
 
+        # ⭐ 위험 상태 표시 (최우선 표시)
+        if dlib_results.get("is_dangerous_condition"):
+            dangerous_message = dlib_results.get("dangerous_condition_message", "DANGER: Eyes Closed + Head Down!")
+            cv2.putText(frame, dangerous_message, (self.text_x_align, self.dlib_info_start_y - 40), 
+                       self.font, self.font_scale + 0.2, (0, 0, 255), 3)  # 더 큰 폰트와 두꺼운 선
+            print(f"[Visualizer] Displaying Dlib dangerous condition: {dangerous_message}")
+
         cv2.putText(frame, f"Dlib Eye: {dlib_results.get('ear_status', 'N/A')}", (self.text_x_align, self.dlib_info_start_y),
                     self.font, self.font_scale, eye_color, self.thickness, cv2.LINE_AA)
         cv2.putText(frame, f"Dlib Mouth: {dlib_results.get('mar_status', 'N/A')}", (self.text_x_align, self.dlib_info_start_y + self.text_spacing),
@@ -255,8 +262,17 @@ class Visualizer:
         font_scale = 0.5
         color = (0, 255, 0) # 초록색
         warning_color = (0, 0, 255) # 빨간색
-        # ⭐ 현재 Head Pitch 값 상시 표시
+        danger_color = (0, 0, 255) # 위험 상태용 빨간색
         
+        # ⭐ 위험 상태 표시 (최우선 표시)
+        if mp_display_results.get("is_dangerous_condition"):
+            dangerous_message = mp_display_results.get("dangerous_condition_message", "DANGER: Eyes Closed + Head Down!")
+            cv2.putText(image, dangerous_message, (text_x_offset, text_y_offset), 
+                       font, font_scale + 0.2, danger_color, 3)  # 더 큰 폰트와 두꺼운 선
+            text_y_offset += 40
+            print(f"[Visualizer] Displaying dangerous condition: {dangerous_message}")
+        
+        # ⭐ 현재 Head Pitch 값 상시 표시
         if 'mp_head_pitch_deg' in mp_display_results:
             pitch_val = mp_display_results['mp_head_pitch_deg']
             # 참고: 이 값은 mediapipe_analyzer.py에서 캘리브레이션된 값입니다.

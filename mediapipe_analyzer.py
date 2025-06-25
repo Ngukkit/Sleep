@@ -476,7 +476,10 @@ class MediaPipeAnalyzer:
             # 손 감지 관련 새로운 필드들
             "hand_status": "No Hands Detected",  # "No Hands", "One Hand", "Two Hands"
             "hand_warning_color": "green",  # "green", "yellow", "red"
-            "hand_warning_message": ""
+            "hand_warning_message": "",
+            # 위험 상태 감지 필드들
+            "is_dangerous_condition": False,  # 눈 감음 + 고개 숙임
+            "dangerous_condition_message": ""
         }
         
         if face_result and face_result.face_landmarks:
@@ -660,6 +663,12 @@ class MediaPipeAnalyzer:
                 if abs(current_pitch) > MP_PITCH_THRESHOLD:
                     results["is_head_down"] = True
                     print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                
+                # 위험 상태 감지: 눈을 감은 상태에서 고개가 숙여지는 경우
+                if results["is_drowsy"] and results["is_head_down"]:
+                    results["is_dangerous_condition"] = True
+                    results["dangerous_condition_message"] = "DANGER: Eyes Closed + Head Down!"
+                    print("[MediaPipeAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
         else:
             results["is_distracted_no_face"] = True
 
