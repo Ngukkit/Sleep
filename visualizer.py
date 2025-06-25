@@ -25,7 +25,7 @@ pose_connection_spec = mp_drawing.DrawingSpec(color=(0, 200, 200), thickness=2) 
 class Visualizer:
     def __init__(self):
         self.font = cv2.FONT_HERSHEY_SIMPLEX
-        self.font_scale = 0.7
+        self.font_scale = 0.5
         self.thickness = 2
         self.line_thickness = 3
         self.text_x_align = 10
@@ -41,6 +41,30 @@ class Visualizer:
     def draw_yolov5_results(self, frame, detections, names, hide_labels=False, hide_conf=False):
         tl = self.line_thickness
         h, w = frame.shape[:2]
+        
+        # YOLO 상태를 좌측 제일 위에 표시
+        yolo_status = "YOLO: No Detection"
+        yolo_color = (100, 100, 100)  # 회색
+        
+        if detections is not None and len(detections):
+            # 가장 높은 신뢰도의 detection을 사용
+            best_detection = max(detections, key=lambda x: x[4])
+            class_name = names[int(best_detection[5])]
+            confidence = best_detection[4]
+            
+            if class_name == 'normal':
+                yolo_status = f"YOLO: Normal ({confidence:.2f})"
+                yolo_color = (255, 200, 90)
+            elif class_name in ['drowsy', 'drowsy#2']:
+                yolo_status = f"YOLO: Drowsy ({confidence:.2f})"
+                yolo_color = (0, 0, 255)
+            elif class_name == 'yawning':
+                yolo_status = f"YOLO: Yawning ({confidence:.2f})"
+                yolo_color = (51, 255, 255)
+        
+        # 좌측 제일 위에 YOLO 상태 표시 (0.5 크기)
+        cv2.putText(frame, yolo_status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, yolo_color, 2)
+        
         if detections is not None and len(detections):
             for *xyxy, conf, cls in reversed(detections):
                 yolo_color = (255, 200, 90)
@@ -87,6 +111,17 @@ class Visualizer:
         head_roll_text = f"Dlib Head (Roll): {head_roll_degree:.1f} deg"
         cv2.putText(frame, head_roll_text, (self.text_x_align, self.dlib_info_start_y + 4 * self.text_spacing),
                     self.font, self.font_scale, head_pose_color, self.thickness, cv2.LINE_AA)
+
+        # Dlib Head Down 상태 표시 추가
+        is_head_down = dlib_results.get('is_head_down', False)
+        if is_head_down:
+            head_down_text = "Dlib Head: DOWN!"
+            head_down_color = (0, 0, 255)  # 빨간색
+        else:
+            head_down_text = "Dlib Head: OK"
+            head_down_color = (0, 255, 0)  # 초록색
+        cv2.putText(frame, head_down_text, (self.text_x_align, self.dlib_info_start_y + 6 * self.text_spacing),
+                    self.font, self.font_scale, head_down_color, self.thickness, cv2.LINE_AA)
 
         head_pose_points = dlib_results.get(
             "head_pose_points", {"start": (0, 0), "end": (0, 0)}
@@ -217,7 +252,7 @@ class Visualizer:
         text_y_offset = 30
         text_x_offset = 400
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.7
+        font_scale = 0.5
         color = (0, 255, 0) # 초록색
         warning_color = (0, 0, 255) # 빨간색
         # ⭐ 현재 Head Pitch 값 상시 표시
@@ -255,22 +290,65 @@ class Visualizer:
             cv2.putText(image, "look ahead", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)
             text_y_offset += 30
 
+        # 보정된 시선 정보 표시 (새로 추가)
+        if 'compensated_gaze_x' in mp_display_results and 'compensated_gaze_y' in mp_display_results:
+            comp_gaze_x = mp_display_results['compensated_gaze_x']
+            comp_gaze_y = mp_display_results['compensated_gaze_y']
+            cv2.putText(image, f"Comp. Gaze: ({comp_gaze_x:.2f}, {comp_gaze_y:.2f})", 
+                       (text_x_offset, text_y_offset), font, font_scale, (255, 255, 0), 2)
+            text_y_offset += 30
+            
+            # 보정된 시선 이탈 감지 표시
+            if mp_display_results.get("is_gaze_compensated"):
+                cv2.putText(image, "Comp. Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
+                           font, font_scale, (0, 0, 255), 2)
+                text_y_offset += 30
+                
+        # Gaze 감지가 비활성화된 경우 표시
+        if mp_display_results.get("gaze_disabled_due_to_head_rotation"):
+            cv2.putText(image, "Gaze: DISABLED (Head Rotated)", (text_x_offset, text_y_offset), 
+                       font, font_scale, (128, 128, 128), 2)  # 회색으로 표시
+            text_y_offset += 30
+
         # 전방 주시 이탈 (캘리브레이션된 경우)
         if mp_display_results.get("is_distracted_from_front"):
             cv2.putText(image, "Distracted from Front!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
             text_y_offset += 30
         
-        # 손 이탈 감지
+        # ----------------------------------------------------
+        # 6. 새로운 손 감지 상태 표시 (MediaPipe 수정된 로직)
+        # ----------------------------------------------------
+        # 손 감지 상태에 따른 메시지와 색상 표시
+        hand_status = mp_display_results.get("hand_status", "No Hands Detected")
+        hand_warning_color = mp_display_results.get("hand_warning_color", "green")
+        hand_warning_message = mp_display_results.get("hand_warning_message", "")
+        
+        # 색상 매핑
+        color_map = {
+            "green": (0, 255, 0),    # 초록색
+            "yellow": (0, 255, 255), # 노란색 (BGR)
+            "red": (0, 0, 255)       # 빨간색
+        }
+        
+        # 손 상태 표시
+        if hand_warning_message:
+            display_color = color_map.get(hand_warning_color, (0, 255, 0))
+            cv2.putText(image, hand_warning_message, (text_x_offset, text_y_offset), 
+                       font, font_scale, display_color, 2)
+            text_y_offset += 30
+        
+        # 손 상태 정보 표시
+        status_color = color_map.get(hand_warning_color, (0, 255, 0))
+        cv2.putText(image, f"Hand Status: {hand_status}", (text_x_offset, text_y_offset), 
+                   font, font_scale, status_color, 2)
+        text_y_offset += 30
+        
+        # 기존 손 이탈 감지 표시 (호환성을 위해 유지)
         if mp_display_results.get("is_left_hand_off"):
             cv2.putText(image, "Left Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
             text_y_offset += 30
         if mp_display_results.get("is_right_hand_off"):
             cv2.putText(image, "Right Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
-        
-        # 양손 핸들 여부
-        if not mp_display_results.get("are_both_hands_on_wheel"):
-            cv2.putText(image, "Please Hold Steering Wheel!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
             text_y_offset += 30
 
         # 얼굴 가림 감지
@@ -295,8 +373,12 @@ class Visualizer:
         return image
 
     def draw_fps(self, frame, fps):
-        cv2.putText(frame, f"FPS: {fps:.2f}", (self.text_x_align, self.fps_y),
-                    self.font, self.font_scale, (0, 255, 255), self.thickness, cv2.LINE_AA)
+        h, w = frame.shape[:2]
+        # 중앙 위에 FPS 표시
+        fps_text = f"FPS: {fps:.2f}"
+        text_size = cv2.getTextSize(fps_text, self.font, self.font_scale, self.thickness)[0]
+        text_x = (w - text_size[0]) // 2  # 중앙 정렬
+        cv2.putText(frame, fps_text, (text_x, 30), self.font, self.font_scale, (0, 255, 255), self.thickness, cv2.LINE_AA)
         return frame
 
     def draw_mediapipe_front_status(self, image, is_calibrated, is_distracted):

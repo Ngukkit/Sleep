@@ -84,7 +84,7 @@ class OpenCVDriverROIPreprocessor:
             self.logger.warning(f"얼굴 캐스케이드 로드 실패: {e}")
             self.face_cascade = None
             self.face_cascade_alt = None
-
+    
     def resize_frame(self, frame: np.ndarray) -> np.ndarray:
         height, width = frame.shape[:2]
         target_w, target_h = self.config.target_width, self.config.target_height
@@ -104,7 +104,7 @@ class OpenCVDriverROIPreprocessor:
             cv2.BORDER_CONSTANT, value=(0, 0, 0)
         )
         return padded
-
+    
     def noise_reduction(self, frame: np.ndarray) -> np.ndarray:
         denoised = cv2.GaussianBlur(
             frame, 
@@ -113,7 +113,7 @@ class OpenCVDriverROIPreprocessor:
         )
         result = cv2.addWeighted(frame, 0.7, denoised, 0.3, 0)
         return result
-
+    
     def enhance_lighting(self, frame: np.ndarray) -> np.ndarray:
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
@@ -124,7 +124,7 @@ class OpenCVDriverROIPreprocessor:
         if self.config.auto_brightness_contrast:
             enhanced_frame = self.auto_adjust_brightness_contrast(enhanced_frame)
         return enhanced_frame
-
+    
     def auto_adjust_brightness_contrast(self, frame: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         mean_brightness = np.mean(gray)
@@ -148,17 +148,17 @@ class OpenCVDriverROIPreprocessor:
             alpha *= 1.2
         adjusted = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
         return adjusted
-
+    
     def edge_enhancement(self, frame: np.ndarray) -> np.ndarray:
         if not self.config.enable_edge_enhancement:
             return frame
         enhanced = cv2.filter2D(frame, -1, self.config.edge_kernel)
         return enhanced
-
+    
     def normalize_frame(self, frame: np.ndarray) -> np.ndarray:
         normalized = frame.astype(np.float32) / 255.0
         return normalized
-
+    
     def get_roi_bounds(self, frame: np.ndarray, face_rect: Tuple[int, int, int, int] = None) -> Tuple[int, int, int, int]:
         h, w = frame.shape[:2]
         if face_rect is None:
@@ -174,7 +174,7 @@ class OpenCVDriverROIPreprocessor:
         x2 = min(w, x + face_w + expand_w)
         y2 = min(h, y + face_h + expand_h_down)
         return x1, y1, x2, y2
-
+    
     def create_roi_mask(self, frame: np.ndarray, roi_bounds: Tuple[int, int, int, int]) -> np.ndarray:
         h, w = frame.shape[:2]
         mask = np.zeros((h, w), dtype=np.uint8)
@@ -183,7 +183,7 @@ class OpenCVDriverROIPreprocessor:
         if self.config.mask_blur_kernel > 0:
             mask = cv2.GaussianBlur(mask, (self.config.mask_blur_kernel, self.config.mask_blur_kernel), 0)
         return mask
-
+    
     def apply_roi_masking(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
         if not self.config.enable_roi_masking:
             return frame
@@ -194,7 +194,7 @@ class OpenCVDriverROIPreprocessor:
         background_float = background.astype(np.float32)
         masked_frame = frame_float * mask_normalized + background_float * (1.0 - mask_normalized)
         return masked_frame.astype(np.uint8)
-
+    
     def detect_face_opencv(self, frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
         if self.face_cascade is None:
             return None
@@ -220,7 +220,7 @@ class OpenCVDriverROIPreprocessor:
             largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
             return tuple(largest_face)
         return None
-
+    
     def calibrate_driver_roi(self, frame: np.ndarray):
         face_rect = self.detect_face_opencv(frame)
         if face_rect:
@@ -245,7 +245,7 @@ class OpenCVDriverROIPreprocessor:
             if self.driver_roi_bounds is not None:
                 roi_bounds = self.driver_roi_bounds
             else:
-                roi_bounds = self.get_roi_bounds(processed_frame, face_rect)
+            roi_bounds = self.get_roi_bounds(processed_frame, face_rect)
             roi_mask = self.create_roi_mask(processed_frame, roi_bounds)
             final_frame = self.apply_roi_masking(processed_frame, roi_mask)
             # 디버깅용: ROI 사각형을 빨간색으로 그려서 반환
@@ -406,18 +406,18 @@ class VideoThread(QThread):
             if not cap.isOpened():
                 print(f"Attempting with CAP_GSTREAMER failed. Retrying with default. Error: Could not open video source {source}")
                 cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
-                if not cap.isOpened():
+    if not cap.isOpened():
                     print(f"Failed to open video source {source} with any specified backend.")
                     self.is_running = False
-                    return
-
+        return
+    
         prev_frame_time = 0
         while self.is_running and cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
+        ret, frame = cap.read()
+        if not ret:
                 print("End of stream or cannot read frame.")
-                break
-
+            break
+        
             im0 = frame.copy()
             frame_h, frame_w, _ = im0.shape # 현재 프레임의 크기
 

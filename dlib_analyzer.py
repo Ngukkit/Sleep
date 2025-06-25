@@ -6,18 +6,24 @@ import numpy as np
 from math import degrees, atan2
 from collections import deque # Added for state consistency
 from detector_utils import calculate_ear, calculate_mar, get_head_pose
+from config_manager import get_dlib_config
 
-# Constants for Drowsiness and Yawn detection
-EYE_AR_THRESH = 0.15
-EYE_AR_CONSEC_FRAMES = 10
-MOUTH_AR_THRESH = 0.4
-MOUTH_AR_CONSEC_FRAMES = 20
+# Constants for Drowsiness and Yawn detection - now loaded from config
+EYE_AR_THRESH = get_dlib_config("eye_ar_thresh", 0.15)
+EYE_AR_CONSEC_FRAMES = get_dlib_config("eye_ar_consec_frames", 15)
+MOUTH_AR_THRESH = get_dlib_config("mouth_ar_thresh", 0.4)
+MOUTH_AR_CONSEC_FRAMES = get_dlib_config("mouth_ar_consec_frames", 30)
 
-# Head Pose Thresholds (degrees)
-# These thresholds will be used to compare current pose with calibrated front pose
-PITCH_THRESHOLD = 15.0 # Max up/down deviation from front
-YAW_THRESHOLD = 60.0   # Max left/right deviation from front
-ROLL_THRESHOLD = 90.0  # Max tilt left/right deviation from front
+# Head Pose Thresholds (degrees) - now loaded from config
+PITCH_THRESHOLD = get_dlib_config("pitch_threshold", 15.0)
+YAW_THRESHOLD = get_dlib_config("yaw_threshold", 60.0)
+ROLL_THRESHOLD = get_dlib_config("roll_threshold", 90.0)
+
+# Pitch down threshold for immediate detection (like MediaPipe)
+PITCH_DOWN_THRESHOLD = get_dlib_config("pitch_down_threshold", 10.0)
+
+# Distraction detection consecutive frames (like MediaPipe)
+DISTRACTION_CONSEC_FRAMES = get_dlib_config("distraction_consec_frames", 10)
 
 class DlibAnalyzer:
     def __init__(self, predictor_path):
@@ -67,6 +73,8 @@ class DlibAnalyzer:
 
         self.ear_frame_counter = 0
         self.mar_frame_counter = 0
+        self.distraction_frame_counter = 0
+        self.no_face_frame_counter = 0
         
         # --- Head Pose Calibration Variables ---
         self.calibrated_rvec = None  # Reference rotation vector for 'front'
@@ -186,6 +194,9 @@ class DlibAnalyzer:
             shape = self._shape_to_np(shape)
             results["landmark_points"] = shape.tolist() # Convert numpy array to list for JSON/display
 
+            # Reset no face counter when face is detected
+            self.no_face_frame_counter = 0
+
             # Eye Aspect Ratio
             left_ear = calculate_ear(shape[self.left_eye])
             right_ear = calculate_ear(shape[self.right_eye])
@@ -236,16 +247,26 @@ class DlibAnalyzer:
                 adjusted_pitch = pitch + self.front_face_offset_pitch
                 adjusted_roll = roll + self.front_face_offset_roll
 
-                # Check if any angle deviates beyond the threshold
+                # Pitch는 즉시 감지 (MediaPipe와 동일)
+                if abs(adjusted_pitch) > PITCH_DOWN_THRESHOLD:
+                    results["is_head_down"] = True
+                    results["head_pose_color"] = (0, 0, 255) # Red for head down
+
+                # Yaw와 Roll은 연속 프레임 카운터 사용 (pitch 제외)
                 if abs(adjusted_yaw) > YAW_THRESHOLD or \
-                   abs(adjusted_pitch) > PITCH_THRESHOLD or \
                    abs(adjusted_roll) > ROLL_THRESHOLD:
-                    results["is_distracted_from_front"] = True
-                    results["head_pose_color"] = (0, 0, 255) # Red for distraction
+                    self.distraction_frame_counter += 1
+                    if self.distraction_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+                        results["is_distracted_from_front"] = True
+                        results["head_pose_color"] = (0, 0, 255) # Red for distraction
+                else:
+                    self.distraction_frame_counter = 0  # Reset counter when not distracted
             else:
                 results["head_pose_color"] = (100, 100, 100) # Grey if not calibrated
         else:
-            # 얼굴이 아예 인식되지 않을 때도 is_distracted_from_front를 True로 설정
-            results["is_distracted_from_front"] = True
+            # 얼굴이 인식되지 않을 때 연속 프레임 카운터 사용
+            self.no_face_frame_counter += 1
+            if self.no_face_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+                results["is_distracted_from_front"] = True
 
         return results
