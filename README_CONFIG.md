@@ -61,7 +61,10 @@ config.json
     "enable_hand_size_filtering": true,        // 손 크기 필터링 활성화 여부
     "face_position_threshold": 0.3,            // 얼굴 위치 편차 허용 임계값 (얼굴 크기 대비 비율)
     "face_size_threshold": 0.5,                // 얼굴 크기 차이 허용 임계값 (비율)
-    "enable_face_position_filtering": true     // 얼굴 위치 필터링 활성화 여부
+    "enable_face_position_filtering": true,    // 얼굴 위치 필터링 활성화 여부
+    "enable_pupil_gaze_detection": true,       // 눈동자 기반 시선 감지 활성화 여부
+    "pupil_gaze_threshold": 0.05,              // 눈동자 시선 이탈 임계값 (얼굴 크기 대비 비율)
+    "pupil_gaze_consec_frames": 10             // 눈동자 시선 이탈 연속 프레임 수
   }
 }
 ```
@@ -164,6 +167,24 @@ MediaPipe는 고개 각도에 따라 눈 깜빡임 임계값을 동적으로 조
 1. 캘리브레이션 시 운전자의 얼굴 중심 위치와 크기를 저장
 2. 매 프레임마다 감지된 얼굴이 저장된 위치/크기 범위 내에 있는지 확인
 3. 범위를 벗어나면 다른 사람으로 판단하여 분석에서 제외
+
+### 눈동자 기반 시선 감지 (MediaPipe)
+MediaPipe의 blendshape 기반 gaze 대신 눈동자 위치를 직접 추적하여 시선 이탈을 감지합니다:
+- **활성화**: `enable_pupil_gaze_detection: true`
+- **임계값**: `pupil_gaze_threshold: 0.05` (얼굴 크기의 5% 이내)
+- **연속 프레임**: `pupil_gaze_consec_frames: 10` (10프레임 연속 이탈 시 감지)
+- **비활성화**: `enable_pupil_gaze_detection: false`
+
+**작동 원리**:
+1. 캘리브레이션 시 운전자가 "정면"을 바라볼 때의 양쪽 눈동자 중심 위치를 저장
+2. 매 프레임마다 현재 눈동자 중심과 캘리브레이션된 위치의 거리를 계산
+3. 거리가 얼굴 크기 대비 임계값을 초과하면 시선 이탈로 판단
+4. 연속 프레임 수가 임계값을 넘으면 최종적으로 시선 이탈로 감지
+
+**장점**:
+- blendshape 기반보다 더 물리적이고 정확한 시선 감지
+- 고개 회전과 무관하게 눈동자 위치만으로 시선 이탈 판단
+- 사용자의 고유한 시선 특성 반영 가능
 
 ## ⚠️ 주의사항
 

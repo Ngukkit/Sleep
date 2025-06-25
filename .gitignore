@@ -151,6 +151,10 @@ runs/
 *.tiff
 *.webp
 
+# screenshot 폴더는 예외로 포함
+!screenshot/
+!screenshot/*.png
+
 # Data files
 *.csv
 *.json

@@ -306,6 +306,17 @@ class Visualizer:
             cv2.putText(image, "look ahead", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)
             text_y_offset += 30
 
+        # ⭐ 눈동자 기반 시선 감지 결과 표시
+        if mp_display_results.get("is_pupil_gaze_deviated"):
+            cv2.putText(image, "Pupil Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
+                       font, font_scale, warning_color, 2)
+            text_y_offset += 30
+        elif mp_display_results.get("enable_pupil_gaze_detection"):
+            # 눈동자 기반 시선 감지가 활성화되어 있지만 이탈하지 않은 경우
+            cv2.putText(image, "Pupil Gaze: OK", (text_x_offset, text_y_offset), 
+                       font, font_scale, color, 2)
+            text_y_offset += 30
+
         # 보정된 시선 정보 표시 (새로 추가)
         if 'compensated_gaze_x' in mp_display_results and 'compensated_gaze_y' in mp_display_results:
             comp_gaze_x = mp_display_results['compensated_gaze_x']

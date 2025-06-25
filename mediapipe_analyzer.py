@@ -43,6 +43,11 @@ HEAD_ROTATION_THRESHOLD_FOR_GAZE = get_mediapipe_config("head_rotation_threshold
 HAND_SIZE_RATIO_THRESHOLD = get_mediapipe_config("hand_size_ratio_threshold", 0.67)
 ENABLE_HAND_SIZE_FILTERING = get_mediapipe_config("enable_hand_size_filtering", True)
 
+# Pupil-based gaze detection constants
+ENABLE_PUPIL_GAZE_DETECTION = get_mediapipe_config("enable_pupil_gaze_detection", True)
+PUPIL_GAZE_THRESHOLD = get_mediapipe_config("pupil_gaze_threshold", 0.05)  # 얼굴 크기 대비 임계값
+PUPIL_GAZE_CONSEC_FRAMES = get_mediapipe_config("pupil_gaze_consec_frames", 10)  # 연속 프레임 수
+
 class MediaPipeAnalyzer:
     def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None):
         # GUI 호환성을 위해 기본값 설정
@@ -71,6 +76,13 @@ class MediaPipeAnalyzer:
         self.face_position_threshold = get_mediapipe_config("face_position_threshold", 0.3)  # Maximum allowed deviation from calibrated position (as ratio of face size)
         self.face_size_threshold = get_mediapipe_config("face_size_threshold", 0.5)      # Maximum allowed size difference (as ratio)
         self.enable_face_position_filtering = get_mediapipe_config("enable_face_position_filtering", True)  # Enable/disable face position filtering
+
+        # --- Pupil-based Gaze Detection Variables ---
+        self.calibrated_pupil_center = None  # (x, y) coordinates of calibrated pupil center
+        self.pupil_gaze_deviated_frame_count = 0  # 연속 프레임 카운터
+        self.enable_pupil_gaze_detection = ENABLE_PUPIL_GAZE_DETECTION
+        self.pupil_gaze_threshold = PUPIL_GAZE_THRESHOLD
+        self.pupil_gaze_consec_frames = PUPIL_GAZE_CONSEC_FRAMES
 
         models_dir = Path(__file__).parent
         face_model_path = models_dir / "models" / "face_landmarker.task"
@@ -186,6 +198,14 @@ class MediaPipeAnalyzer:
             print(f"[MediaPipeAnalyzer] Face position calibrated: center=({face_center_x:.1f}, {face_center_y:.1f}), "
                   f"size=({face_width:.1f}, {face_height:.1f})")
             
+            # --- Pupil Position Calibration for Task API ---
+            pupil_center = self._get_pupil_center(face_landmarks)
+            if pupil_center is not None:
+                self.calibrated_pupil_center = pupil_center
+                print(f"[MediaPipeAnalyzer] Pupil position calibrated: center=({pupil_center[0]:.3f}, {pupil_center[1]:.3f})")
+            else:
+                print("[MediaPipeAnalyzer] Pupil position calibration failed")
+            
             print("[MediaPipeAnalyzer] Task API front pose calibration flag set.")
             return True
         else:
@@ -222,6 +242,14 @@ class MediaPipeAnalyzer:
                 
                 print(f"[MediaPipeAnalyzer] Face position calibrated: center=({face_center_x:.1f}, {face_center_y:.1f}), "
                       f"size=({face_width:.1f}, {face_height:.1f})")
+                
+                # --- Pupil Position Calibration for Face Mesh ---
+                pupil_center = self._get_pupil_center(face_landmarks)
+                if pupil_center is not None:
+                    self.calibrated_pupil_center = pupil_center
+                    print(f"[MediaPipeAnalyzer] Pupil position calibrated: center=({pupil_center[0]:.3f}, {pupil_center[1]:.3f})")
+                else:
+                    print("[MediaPipeAnalyzer] Pupil position calibration failed")
                 
                 # gaze 캘리브레이션 - 실제 현재 gaze 값 계산
                 try:
@@ -381,7 +409,9 @@ class MediaPipeAnalyzer:
             "mp_head_yaw_deg": 0.0,
             "mp_head_roll_deg": 0.0,
             "mp_is_calibrated": self.is_calibrated,
-            "mp_is_distracted_from_front": False
+            "mp_is_distracted_from_front": False,
+            "is_pupil_gaze_deviated": False,
+            "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection
         }
         
         # BGR -> RGB 변환
@@ -399,6 +429,10 @@ class MediaPipeAnalyzer:
                 return results
             
             results["face_landmarks"] = face_landmarks
+            
+            # --- Pupil-based Gaze Detection ---
+            pupil_gaze_deviated = self._calculate_pupil_gaze_deviation_v2(face_landmarks, frame_size)
+            results["is_pupil_gaze_deviated"] = pupil_gaze_deviated
             
             # Head pose 계산
             head_pose_data = self._get_mp_head_pose(frame_size, face_landmarks)
@@ -561,7 +595,11 @@ class MediaPipeAnalyzer:
             "hand_warning_message": "",
             # 위험 상태 감지 필드들
             "is_dangerous_condition": False,  # 눈 감음 + 고개 숙임
-            "dangerous_condition_message": ""
+            "dangerous_condition_message": "",
+            # 눈동자 기반 시선 감지 필드들
+            "is_pupil_gaze_deviated": False,
+            "pupil_gaze_deviation": 0.0,
+            "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection
         }
         
         if face_result and face_result.face_landmarks:
@@ -573,6 +611,10 @@ class MediaPipeAnalyzer:
                 # Face is outside calibrated bounds - treat as no face detected
                 results["is_distracted_no_face"] = True
                 return results
+            
+            # --- Pupil-based Gaze Detection ---
+            pupil_gaze_deviated = self._calculate_pupil_gaze_deviation_v2(face_result.face_landmarks[0], frame_size)
+            results["is_pupil_gaze_deviated"] = pupil_gaze_deviated
             
             # 진짜 pitch 계산
             true_pitch = self.get_true_pitch_from_landmarks(face_result.face_landmarks[0])
@@ -1035,3 +1077,139 @@ class MediaPipeAnalyzer:
             return False
         
         return True
+
+    def _get_pupil_center(self, face_landmarks):
+        """
+        Calculate the center point between left and right pupils.
+        Returns (x, y) coordinates in normalized space (0-1).
+        """
+        try:
+            if hasattr(face_landmarks, 'landmark'):
+                # 기존 Face Mesh 방식
+                landmarks = face_landmarks.landmark
+                # MediaPipe Face Mesh의 눈동자 랜드마크 인덱스
+                left_pupil = np.array([landmarks[468].x, landmarks[468].y])   # 왼쪽 눈동자 중심
+                right_pupil = np.array([landmarks[473].x, landmarks[473].y])  # 오른쪽 눈동자 중심
+            else:
+                # Task API 방식 - 리스트 형태
+                landmarks = face_landmarks
+                left_pupil = np.array([landmarks[468].x, landmarks[468].y])
+                right_pupil = np.array([landmarks[473].x, landmarks[473].y])
+            
+            # 양쪽 눈동자의 중심점 계산
+            pupil_center = (left_pupil + right_pupil) / 2
+            return pupil_center
+            
+        except Exception as e:
+            print(f"[MediaPipeAnalyzer] Error calculating pupil center: {e}")
+            return None
+
+    def _calculate_pupil_gaze_deviation(self, face_landmarks, frame_size):
+        """
+        Calculate gaze deviation based on pupil position.
+        Returns True if gaze is deviated, False otherwise.
+        """
+        if not self.enable_pupil_gaze_detection:
+            return False
+        
+        if not self.is_calibrated or self.calibrated_pupil_center is None:
+            return False
+        
+        current_pupil_center = self._get_pupil_center(face_landmarks)
+        if current_pupil_center is None:
+            return False
+        
+        # 캘리브레이션된 눈동자 중심과 현재 눈동자 중심의 거리 계산
+        deviation = np.linalg.norm(current_pupil_center - self.calibrated_pupil_center)
+        
+        # 얼굴 크기 대비 정규화된 거리 계산
+        if hasattr(face_landmarks, 'landmark'):
+            landmarks = face_landmarks.landmark
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+        else:
+            landmarks = face_landmarks
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+        
+        face_width = (max(x_coords) - min(x_coords))
+        face_height = (max(y_coords) - min(y_coords))
+        face_size = max(face_width, face_height)  # 얼굴 크기 (정규화된 좌표)
+        
+        # 얼굴 크기 대비 정규화된 거리
+        normalized_deviation = deviation / face_size
+        
+        # 연속 프레임 카운터 업데이트
+        if normalized_deviation > self.pupil_gaze_threshold:
+            self.pupil_gaze_deviated_frame_count += 1
+        else:
+            self.pupil_gaze_deviated_frame_count = 0
+        
+        # 연속 프레임 수가 임계값을 넘으면 시선 이탈로 판단
+        is_deviated = self.pupil_gaze_deviated_frame_count >= self.pupil_gaze_consec_frames
+        
+        if is_deviated:
+            print(f"[MediaPipeAnalyzer] Pupil gaze deviated: deviation={normalized_deviation:.3f} > {self.pupil_gaze_threshold}, "
+                  f"consec_frames={self.pupil_gaze_deviated_frame_count}")
+        
+        return is_deviated
+
+    def _calculate_pupil_gaze_deviation_v2(self, face_landmarks, frame_size):
+        """
+        Calculate gaze deviation based on pupil position relative to a virtual front point.
+        캘리브레이션 시 정면에 가상의 점을 설정하고, 그 점을 바라보는 눈동자 위치를 기준으로 시선 이탈을 판단합니다.
+        """
+        if not self.enable_pupil_gaze_detection:
+            return False
+        
+        if not self.is_calibrated or self.calibrated_pupil_center is None:
+            return False
+        
+        current_pupil_center = self._get_pupil_center(face_landmarks)
+        if current_pupil_center is None:
+            return False
+        
+        # 캘리브레이션 시 설정된 가상의 정면 점 (화면 중앙)
+        virtual_front_point = np.array([0.5, 0.5])  # 정규화된 좌표 (화면 중앙)
+        
+        # 현재 눈동자 중심과 가상 정면 점의 거리 계산
+        deviation_from_front = np.linalg.norm(current_pupil_center - virtual_front_point)
+        
+        # 캘리브레이션 시 눈동자가 정면을 바라볼 때의 거리 (기준 거리)
+        calibrated_deviation_from_front = np.linalg.norm(self.calibrated_pupil_center - virtual_front_point)
+        
+        # 현재 거리와 캘리브레이션 시 거리의 차이
+        deviation_diff = abs(deviation_from_front - calibrated_deviation_from_front)
+        
+        # 얼굴 크기 대비 정규화된 거리 계산
+        if hasattr(face_landmarks, 'landmark'):
+            landmarks = face_landmarks.landmark
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+        else:
+            landmarks = face_landmarks
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+        
+        face_width = (max(x_coords) - min(x_coords))
+        face_height = (max(y_coords) - min(y_coords))
+        face_size = max(face_width, face_height)  # 얼굴 크기 (정규화된 좌표)
+        
+        # 얼굴 크기 대비 정규화된 거리 차이
+        normalized_deviation = deviation_diff / face_size
+        
+        # 연속 프레임 카운터 업데이트
+        if normalized_deviation > self.pupil_gaze_threshold:
+            self.pupil_gaze_deviated_frame_count += 1
+        else:
+            self.pupil_gaze_deviated_frame_count = 0
+        
+        # 연속 프레임 수가 임계값을 넘으면 시선 이탈로 판단
+        is_deviated = self.pupil_gaze_deviated_frame_count >= self.pupil_gaze_consec_frames
+        
+        if is_deviated:
+            print(f"[MediaPipeAnalyzer] Pupil gaze deviated from front: deviation={normalized_deviation:.3f} > {self.pupil_gaze_threshold}, "
+                  f"consec_frames={self.pupil_gaze_deviated_frame_count}")
+            print(f"[MediaPipeAnalyzer] Current pupil: {current_pupil_center}, Calibrated pupil: {self.calibrated_pupil_center}")
+        
+        return is_deviated

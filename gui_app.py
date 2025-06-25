@@ -190,7 +190,7 @@ class VideoThread(QThread):
         imgsz = self.config_args.get('imgsz', 640)
         conf_thres = self.config_args.get('conf_thres', 0.25)
         iou_thres = self.config_args.get('iou_thres', 0.45)
-        max_det = self.config_args.get('max_det', 1)
+        max_det = self.config_args.get('max_det', 10)
         device = self.config_args.get('device', '')
         hide_labels = self.config_args.get('hide_labels', False)
         hide_conf = self.config_args.get('hide_conf', False)
@@ -300,7 +300,7 @@ class VideoThread(QThread):
                              self.config_args.get('enable_mediapipe', False),
                              self.config_args.get('conf_thres', 0.25),
                              self.config_args.get('iou_thres', 0.45),
-                             self.config_args.get('max_det', 1),
+                             self.config_args.get('max_det', 10),
                              self.config_args.get('hide_labels', False),
                              self.config_args.get('hide_conf', False))
             
@@ -380,6 +380,20 @@ class VideoThread(QThread):
         
         if enable_mediapipe and self.mediapipe_analyzer:
             im0 = self.visualizer_instance.draw_mediapipe_results(im0, mediapipe_results)
+            
+            # 디버깅: MediaPipe 결과 출력
+            if mediapipe_results:
+                print(f"[DEBUG] MediaPipe results keys: {list(mediapipe_results.keys())}")
+                if mediapipe_results.get("is_drowsy"):
+                    print("[DEBUG] MediaPipe: Drowsy detected!")
+                if mediapipe_results.get("is_yawning"):
+                    print("[DEBUG] MediaPipe: Yawning detected!")
+                if mediapipe_results.get("is_pupil_gaze_deviated"):
+                    print("[DEBUG] MediaPipe: Pupil gaze deviated!")
+                if mediapipe_results.get("is_dangerous_condition"):
+                    print("[DEBUG] MediaPipe: Dangerous condition detected!")
+            else:
+                print("[DEBUG] MediaPipe results is empty")
 
         # --- 5. Driver Status Analysis ---
         if enable_dlib and dlib_results:
@@ -631,7 +645,7 @@ class MainApp(QWidget):
             'imgsz': 640,
             'conf_thres': 0.10,
             'iou_thres': 0.45,
-            'max_det': 1,
+            'max_det': 10,  # 여러 얼굴을 감지하여 가장 큰 얼굴 선택
             'device': '',
             'view_img': True,
             'save_txt': False,

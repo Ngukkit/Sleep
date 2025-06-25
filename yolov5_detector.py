@@ -53,6 +53,23 @@ class YOLOv5Detector:
         # Scale back boxes to original image size
         if det and len(det[0]): # Check if any detections for the batch (assuming batch size 1)
             det[0][:, :4] = scale_coords(img.shape[2:], det[0][:, :4], img_orig.shape).round()
+            
+            # Select the largest face (largest bounding box area)
+            if len(det[0]) > 1:
+                # Calculate areas of all detections
+                areas = []
+                for detection in det[0]:
+                    x1, y1, x2, y2 = detection[:4]
+                    area = (x2 - x1) * (y2 - y1)
+                    areas.append(area)
+                
+                # Find the index of the largest face
+                largest_idx = np.argmax(areas)
+                
+                # Keep only the largest face
+                det[0] = det[0][largest_idx:largest_idx+1]
+                
+                print(f"[YOLOv5Detector] Multiple faces detected ({len(areas)}), selected largest face (area: {areas[largest_idx]:.0f})")
 
         return det[0], (t2 - t1), (t3 - t2) # Return detections, inference time, nms time
 
