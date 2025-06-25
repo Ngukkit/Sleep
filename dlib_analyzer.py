@@ -11,6 +11,7 @@ from config_manager import get_dlib_config
 # Constants for Drowsiness and Yawn detection - now loaded from config
 EYE_AR_THRESH = get_dlib_config("eye_ar_thresh", 0.15)
 EYE_AR_CONSEC_FRAMES = get_dlib_config("eye_ar_consec_frames", 15)
+EYE_OPEN_CONSEC_FRAMES = get_dlib_config("eye_open_consec_frames", 5)
 MOUTH_AR_THRESH = get_dlib_config("mouth_ar_thresh", 0.4)
 MOUTH_AR_CONSEC_FRAMES = get_dlib_config("mouth_ar_consec_frames", 30)
 
@@ -73,6 +74,7 @@ class DlibAnalyzer:
 
         self.ear_frame_counter = 0
         self.mar_frame_counter = 0
+        self.eye_open_frame_counter = 0
         self.distraction_frame_counter = 0
         self.no_face_frame_counter = 0
         
@@ -83,6 +85,28 @@ class DlibAnalyzer:
         self.front_face_offset_yaw = 0.0 # Yaw offset (degrees) from current pose to designated 'front'
         self.front_face_offset_pitch = 0.0 # Pitch offset (degrees)
         self.front_face_offset_roll = 0.0 # Roll offset (degrees)
+        
+        # --- Face Position Calibration Variables ---
+        self.calibrated_face_center = None  # (x, y) coordinates of calibrated face center
+        self.calibrated_face_size = None    # (width, height) of calibrated face
+        self.calibrated_face_roi = None     # (x1, y1, x2, y2) ROI bounds
+        self.face_position_threshold = get_dlib_config("face_position_threshold", 0.3)  # Maximum allowed deviation from calibrated position (as ratio of face size)
+        self.face_size_threshold = get_dlib_config("face_size_threshold", 0.5)      # Maximum allowed size difference (as ratio)
+        self.enable_face_position_filtering = get_dlib_config("enable_face_position_filtering", True)  # Enable/disable face position filtering
+        
+        # --- Eye detection stability improvements ---
+        self.is_head_down_previous = False  # Track previous head down state
+        self.eye_detection_stable_frames = 0  # Counter for stable eye detection
+        self.eyes_confirmed_closed = False  # Flag to track if eyes are confirmed closed
+        self.eyes_closed_during_head_down = False  # Flag to maintain eye state during head down
+        
+        # --- Relative eye detection variables ---
+        self.calibrated_ear = None  # EAR value at calibration time
+        self.ear_threshold_ratio = 0.8  # Ratio of calibrated EAR to consider eyes closed
+        
+        # --- Cumulative head pose counters ---
+        self.cumulative_distraction_counter = 0  # Cumulative counter for head pose distraction
+        self.was_distracted_previous = False  # Track if was distracted in previous frame
 
     def _shape_to_np(self, shape, dtype="int"):
         coords = np.zeros((68, 2), dtype=dtype)
@@ -166,8 +190,79 @@ class DlibAnalyzer:
         self.front_face_offset_yaw = -head_pose_data["yaw_deg"]
         self.front_face_offset_pitch = -head_pose_data["pitch_deg"]
         self.front_face_offset_roll = -head_pose_data["roll_deg"]
+        
+        # Calculate and store calibrated EAR value
+        left_ear = calculate_ear(shape_2d_landmarks[self.left_eye])
+        right_ear = calculate_ear(shape_2d_landmarks[self.right_eye])
+        self.calibrated_ear = (left_ear + right_ear) / 2.0
+
+        # --- Face Position and Size Calibration ---
+        # Calculate face center from landmarks
+        face_center_x = np.mean(shape_2d_landmarks[:, 0])
+        face_center_y = np.mean(shape_2d_landmarks[:, 1])
+        self.calibrated_face_center = (face_center_x, face_center_y)
+        
+        # Calculate face size (width and height from landmarks)
+        face_width = np.max(shape_2d_landmarks[:, 0]) - np.min(shape_2d_landmarks[:, 0])
+        face_height = np.max(shape_2d_landmarks[:, 1]) - np.min(shape_2d_landmarks[:, 1])
+        self.calibrated_face_size = (face_width, face_height)
+        
+        # Calculate face ROI bounds with some margin
+        margin_x = face_width * 0.2
+        margin_y = face_height * 0.2
+        x1 = max(0, face_center_x - face_width/2 - margin_x)
+        y1 = max(0, face_center_y - face_height/2 - margin_y)
+        x2 = min(frame_size[1], face_center_x + face_width/2 + margin_x)
+        y2 = min(frame_size[0], face_center_y + face_height/2 + margin_y)
+        self.calibrated_face_roi = (x1, y1, x2, y2)
 
         print(f"Dlib calibrated 'front' pose: Yaw={head_pose_data['yaw_deg']:.2f}, Pitch={head_pose_data['pitch_deg']:.2f}, Roll={head_pose_data['roll_deg']:.2f}")
+        print(f"Dlib calibrated EAR: {self.calibrated_ear:.4f}")
+        print(f"Dlib calibrated face center: ({face_center_x:.1f}, {face_center_y:.1f})")
+        print(f"Dlib calibrated face size: ({face_width:.1f}, {face_height:.1f})")
+        print(f"Dlib calibrated face ROI: ({x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f})")
+        return True
+
+    def _is_face_within_calibrated_bounds(self, shape_2d_landmarks):
+        """
+        Check if the current detected face is within the calibrated driver's position and size bounds.
+        Returns True if the face is likely the same driver, False if it's a different person.
+        """
+        if not self.enable_face_position_filtering:
+            return True  # If filtering is disabled, accept all faces
+        
+        if not self.is_calibrated or self.calibrated_face_center is None or self.calibrated_face_size is None:
+            return True  # If not calibrated, accept all faces
+        
+        # Calculate current face center and size
+        current_face_center_x = np.mean(shape_2d_landmarks[:, 0])
+        current_face_center_y = np.mean(shape_2d_landmarks[:, 1])
+        current_face_width = np.max(shape_2d_landmarks[:, 0]) - np.min(shape_2d_landmarks[:, 0])
+        current_face_height = np.max(shape_2d_landmarks[:, 1]) - np.min(shape_2d_landmarks[:, 1])
+        
+        # Check position deviation
+        calibrated_center_x, calibrated_center_y = self.calibrated_face_center
+        calibrated_width, calibrated_height = self.calibrated_face_size
+        
+        # Calculate position difference as ratio of face size
+        position_diff_x = abs(current_face_center_x - calibrated_center_x) / calibrated_width
+        position_diff_y = abs(current_face_center_y - calibrated_center_y) / calibrated_height
+        
+        # Check size difference
+        size_diff_width = abs(current_face_width - calibrated_width) / calibrated_width
+        size_diff_height = abs(current_face_height - calibrated_height) / calibrated_height
+        
+        # Check if within thresholds
+        position_ok = (position_diff_x < self.face_position_threshold and 
+                      position_diff_y < self.face_position_threshold)
+        size_ok = (size_diff_width < self.face_size_threshold and 
+                  size_diff_height < self.face_size_threshold)
+        
+        if not position_ok or not size_ok:
+            print(f"[DlibAnalyzer] Face rejected - Position diff: ({position_diff_x:.2f}, {position_diff_y:.2f}), "
+                  f"Size diff: ({size_diff_width:.2f}, {size_diff_height:.2f})")
+            return False
+        
         return True
 
     def analyze_frame(self, frame):
@@ -196,26 +291,109 @@ class DlibAnalyzer:
         if len(rects) > 0:
             shape = self.predictor(gray, rects[0])
             shape = self._shape_to_np(shape)
+            
+            # Check if the detected face is within calibrated bounds
+            if not self._is_face_within_calibrated_bounds(shape):
+                # Face is outside calibrated bounds - treat as no face detected
+                results["is_distracted_no_face"] = True
+                self.no_face_frame_counter += 1
+                if self.no_face_frame_counter >= 5:  # After 5 frames of no valid face
+                    results["is_distracted_from_front"] = True
+                return results
+            
             results["landmark_points"] = shape.tolist() # Convert numpy array to list for JSON/display
 
             # Reset no face counter when face is detected
             self.no_face_frame_counter = 0
 
-            # Eye Aspect Ratio
+            # Head Pose Estimation (moved before eye detection for stability)
+            h, w = frame.shape[:2]
+            pitch, yaw, roll, nose_start_point2D, nose_end_point2D = get_head_pose(shape, (h, w))
+            results["head_pitch_degree"] = pitch
+            results["head_yaw_degree"] = yaw
+            results["head_roll_degree"] = roll
+            results["head_pose_points"] = {
+                'start': nose_start_point2D,
+                'end': nose_end_point2D
+            }
+            results["head_pose_color"] = (0, 255, 0) # Green by default
+
+            # Eye Aspect Ratio with relative detection
             left_ear = calculate_ear(shape[self.left_eye])
             right_ear = calculate_ear(shape[self.right_eye])
             ear = (left_ear + right_ear) / 2.0
-
-            if ear < EYE_AR_THRESH:
-                self.ear_frame_counter += 1
-                if self.ear_frame_counter >= EYE_AR_CONSEC_FRAMES:
-                    results["is_drowsy_ear"] = True
-                    results["ear_status"] = "Closed"
-                    results["eye_color"] = (0, 0, 255) # Red for closed eyes
+            
+            # Check if head is currently down
+            is_head_down_current = False
+            if self.is_calibrated:
+                adjusted_pitch = pitch + self.front_face_offset_pitch
+                is_head_down_current = abs(adjusted_pitch) > PITCH_DOWN_THRESHOLD
+            
+            # Update previous head down state
+            self.is_head_down_previous = is_head_down_current
+            
+            # Determine eye threshold - use relative if calibrated, otherwise absolute
+            if self.calibrated_ear is not None:
+                # Use relative threshold based on calibrated EAR
+                current_eye_thresh = self.calibrated_ear * self.ear_threshold_ratio
             else:
-                self.ear_frame_counter = 0
-                results["ear_status"] = "Open"
-                results["eye_color"] = (0, 255, 0) # Green for open eyes
+                # Fall back to absolute threshold if not calibrated
+                current_eye_thresh = EYE_AR_THRESH
+            
+            # Eye state detection with head down consideration
+            if ear < current_eye_thresh:
+                # Eyes appear closed
+                self.eye_open_frame_counter = 0  # Reset open counter
+                if self.eye_detection_stable_frames > 0:
+                    # Maintain previous state for stability
+                    self.eye_detection_stable_frames -= 1
+                    if self.ear_frame_counter > 0:
+                        results["is_drowsy_ear"] = True
+                        results["ear_status"] = "Closed"
+                        results["eye_color"] = (0, 0, 255) # Red for closed eyes
+                else:
+                    self.ear_frame_counter += 1
+                    if self.ear_frame_counter >= EYE_AR_CONSEC_FRAMES:
+                        results["is_drowsy_ear"] = True
+                        results["ear_status"] = "Closed"
+                        results["eye_color"] = (0, 0, 255) # Red for closed eyes
+                        self.eyes_confirmed_closed = True  # Mark eyes as confirmed closed
+                        # If head is down when eyes are confirmed closed, maintain this state
+                        if is_head_down_current:
+                            self.eyes_closed_during_head_down = True
+            else:
+                # Eyes appear open
+                if self.eyes_closed_during_head_down and is_head_down_current:
+                    # If eyes were closed during head down and head is still down, maintain closed state
+                    results["is_drowsy_ear"] = True
+                    results["ear_status"] = "Closed (Maintained)"
+                    results["eye_color"] = (0, 0, 255) # Red for closed eyes
+                else:
+                    # Normal eye open detection with counter
+                    self.ear_frame_counter = 0  # Reset closed counter
+                    self.eye_open_frame_counter += 1  # Increment open counter
+                    
+                    if self.eye_open_frame_counter >= EYE_OPEN_CONSEC_FRAMES:
+                        # Eyes confirmed open after required consecutive frames
+                        self.eye_detection_stable_frames = 0  # Reset stability counter
+                        results["ear_status"] = "Open"
+                        results["eye_color"] = (0, 255, 0) # Green for open eyes
+                        self.eyes_confirmed_closed = False  # Reset confirmed closed flag
+                        self.eyes_closed_during_head_down = False  # Reset head down eye state
+                    else:
+                        # Eyes appear open but not enough consecutive frames yet
+                        # Maintain previous state until confirmed
+                        if self.ear_frame_counter > 0 or self.eyes_confirmed_closed:
+                            results["is_drowsy_ear"] = True
+                            results["ear_status"] = "Closed (Opening)"
+                            results["eye_color"] = (0, 165, 255) # Orange for transitioning
+                        else:
+                            results["ear_status"] = "Opening"
+                            results["eye_color"] = (0, 165, 255) # Orange for transitioning
+            
+            # Reset head down eye state when head returns to normal position
+            if not is_head_down_current:
+                self.eyes_closed_during_head_down = False
 
             # Mouth Aspect Ratio (for yawning)
             mar = calculate_mar(shape[self.mouth])
@@ -231,18 +409,6 @@ class DlibAnalyzer:
                 results["mar_status"] = "Normal"
                 results["mouth_color"] = (0, 255, 0) # Green for normal mouth
 
-            # Head Pose Estimation
-            h, w = frame.shape[:2]
-            pitch, yaw, roll, nose_start_point2D, nose_end_point2D = get_head_pose(shape, (h, w))
-            results["head_pitch_degree"] = pitch
-            results["head_yaw_degree"] = yaw
-            results["head_roll_degree"] = roll
-            results["head_pose_points"] = {
-                'start': nose_start_point2D,
-                'end': nose_end_point2D
-            }
-            results["head_pose_color"] = (0, 255, 0) # Green by default
-
             # --- Check deviation from calibrated front pose ---
             if self.is_calibrated:
                 # Apply the stored offsets to the current pose angles
@@ -257,14 +423,27 @@ class DlibAnalyzer:
                     results["head_pose_color"] = (0, 0, 255) # Red for head down
 
                 # Yaw와 Roll은 연속 프레임 카운터 사용 (pitch 제외)
-                if abs(adjusted_yaw) > YAW_THRESHOLD or \
-                   abs(adjusted_roll) > ROLL_THRESHOLD:
+                is_currently_distracted = abs(adjusted_yaw) > YAW_THRESHOLD or abs(adjusted_roll) > ROLL_THRESHOLD
+                
+                if is_currently_distracted:
+                    # Currently distracted - increment counter
                     self.distraction_frame_counter += 1
+                    self.cumulative_distraction_counter += 1
+                    self.was_distracted_previous = True
+                    
                     if self.distraction_frame_counter >= DISTRACTION_CONSEC_FRAMES:
                         results["is_distracted_from_front"] = True
                         results["head_pose_color"] = (0, 0, 255) # Red for distraction
                 else:
-                    self.distraction_frame_counter = 0  # Reset counter when not distracted
+                    # Not currently distracted
+                    if self.was_distracted_previous:
+                        # Just came out of distraction - maintain cumulative counter but reset consecutive
+                        self.distraction_frame_counter = 0
+                        self.was_distracted_previous = False
+                    else:
+                        # Was not distracted before - reset both counters
+                        self.distraction_frame_counter = 0
+                        self.cumulative_distraction_counter = 0
             else:
                 results["head_pose_color"] = (100, 100, 100) # Grey if not calibrated
             
@@ -273,6 +452,11 @@ class DlibAnalyzer:
                 results["is_dangerous_condition"] = True
                 results["dangerous_condition_message"] = "DANGER: Eyes Closed + Head Down!"
                 print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
+            # 추가: 눈이 확인된 상태에서 고개를 숙이면 즉시 위험 경고
+            elif self.eyes_confirmed_closed and results["is_head_down"]:
+                results["is_dangerous_condition"] = True
+                results["dangerous_condition_message"] = "DANGER: Confirmed Eyes Closed + Head Down!"
+                print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Confirmed eyes closed and head down!")
         else:
             # 얼굴이 인식되지 않을 때 연속 프레임 카운터 사용
             self.no_face_frame_counter += 1

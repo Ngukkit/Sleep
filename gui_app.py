@@ -219,13 +219,19 @@ class VideoThread(QThread):
                 self.dlib_analyzer = dlib_analyzer.DlibAnalyzer(dlib_predictor_path)
 
         if enable_mediapipe:
-            print(f"[VideoThread] Initializing MediaPipe Analyzer in {mediapipe_mode_str} mode...")
+            print(f"[VideoThread] Initializing MediaPipe Analyzer...")
+            
+            # config.json에서 MediaPipe 모드 설정 읽기
+            from config_manager import get_mediapipe_config
+            use_video_mode = get_mediapipe_config("use_video_mode", True)
             
             running_mode = (
-                vision.RunningMode.LIVE_STREAM 
-                if mediapipe_mode_str == "Live Stream (Webcam)" 
-                else vision.RunningMode.VIDEO
+                vision.RunningMode.VIDEO if use_video_mode 
+                else vision.RunningMode.LIVE_STREAM
             )
+            
+            mode_str = "VIDEO" if use_video_mode else "LIVE_STREAM"
+            print(f"[VideoThread] MediaPipe mode: {mode_str} (from config.json)")
             
             self.mediapipe_analyzer = mediapipe_analyzer.MediaPipeAnalyzer(
                 running_mode=running_mode,
@@ -487,12 +493,6 @@ class MainApp(QWidget):
         self.chk_mediapipe.setChecked(False)
         self.chk_mediapipe.stateChanged.connect(self.update_front_face_checkbox_states)
 
-        # MediaPipe 실행 모드 선택
-        self.combo_mediapipe_mode = QComboBox()
-        self.combo_mediapipe_mode.addItems(["Video (File)", "Live Stream (Webcam)"])
-        self.combo_mediapipe_mode.setEnabled(self.chk_mediapipe.isChecked())
-        self.chk_mediapipe.stateChanged.connect(self.combo_mediapipe_mode.setEnabled)
-
         # 통합 캘리브레이션 버튼으로 변경
         self.btn_calibrate = QPushButton("Calibrate Front Face")
         self.btn_calibrate.setEnabled(False)
@@ -548,7 +548,6 @@ class MainApp(QWidget):
         control_layout.addWidget(self.chk_yolo)
         control_layout.addWidget(self.chk_dlib)
         control_layout.addWidget(self.chk_mediapipe)
-        control_layout.addWidget(self.combo_mediapipe_mode)
         control_layout.addWidget(self.btn_calibrate)
         control_layout.addWidget(self.btn_config)
         control_layout.addWidget(self.btn_reload_config)
@@ -655,7 +654,6 @@ class MainApp(QWidget):
             'enable_dlib': self.chk_dlib.isChecked(),
             'enable_yolo': self.chk_yolo.isChecked(),
             'enable_mediapipe': self.chk_mediapipe.isChecked(),
-            'mediapipe_mode': self.combo_mediapipe_mode.currentText(), # 선택된 모드 추가
             'socket_ip': self.socket_ip,
             'socket_port': self.socket_port,
             'image_files': image_files,

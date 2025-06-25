@@ -15,13 +15,17 @@ config.json
   "dlib": {
     "eye_ar_thresh": 0.15,           // 눈 감음 임계값 (낮을수록 민감)
     "eye_ar_consec_frames": 15,      // 눈 감음 연속 프레임 수
+    "eye_open_consec_frames": 5,     // 눈 열림 확인 연속 프레임 수
     "mouth_ar_thresh": 0.4,          // 입 벌림 임계값 (높을수록 민감)
     "mouth_ar_consec_frames": 30,    // 입 벌림 연속 프레임 수
     "pitch_threshold": 15.0,         // 고개 상하 회전 임계값 (도)
     "yaw_threshold": 60.0,           // 고개 좌우 회전 임계값 (도)
     "roll_threshold": 90.0,          // 고개 기울기 임계값 (도)
     "pitch_down_threshold": 10.0,    // 고개 숙임 즉시 감지 임계값 (도)
-    "distraction_consec_frames": 10  // 주의 이탈 연속 프레임 수
+    "distraction_consec_frames": 10, // 주의 이탈 연속 프레임 수
+    "face_position_threshold": 0.3,  // 얼굴 위치 편차 허용 임계값 (얼굴 크기 대비 비율)
+    "face_size_threshold": 0.5,      // 얼굴 크기 차이 허용 임계값 (비율)
+    "enable_face_position_filtering": true  // 얼굴 위치 필터링 활성화 여부
   }
 }
 ```
@@ -30,21 +34,34 @@ config.json
 ```json
 {
   "mediapipe": {
-    "eye_blink_threshold": 0.3,      // 눈 깜빡임 임계값
+    "eye_blink_threshold": 0.3,      // 기본 눈 깜빡임 임계값 (정면)
+    "eye_blink_threshold_head_up": 0.2,    // 고개 들었을 때 눈 깜빡임 임계값 (더 관대)
+    "eye_blink_threshold_head_down": 0.25, // 고개 숙였을 때 눈 깜빡임 임계값 (중간)
+    "head_up_threshold_for_eye": -10.0,    // 고개 들음 판정 기준 (도)
+    "head_down_threshold_for_eye": 8.0,    // 고개 숙임 판정 기준 (도)
     "jaw_open_threshold": 0.4,       // 턱 벌림 임계값
     "drowsy_consec_frames": 15,      // 졸음 연속 프레임 수
     "yawn_consec_frames": 30,        // 하품 연속 프레임 수
     "pitch_down_threshold": 10,      // 고개 숙임 임계값
-    "pitch_up_threshold": -15,       // 고개 들기 임계값
+    "pitch_up_threshold": -50,       // 고개 들기 임계값
     "pose_consec_frames": 20,        // 자세 연속 프레임 수
     "gaze_vector_threshold": 0.5,    // 시선 벡터 임계값
-    "mp_yaw_threshold": 30.0,        // MediaPipe 고개 좌우 회전 임계값
+    "mp_yaw_threshold": 45.0,        // MediaPipe 고개 좌우 회전 임계값
     "mp_pitch_threshold": 10.0,      // MediaPipe 고개 상하 회전 임계값
     "mp_roll_threshold": 999.0,      // MediaPipe 고개 기울기 임계값 (거의 무시)
     "gaze_threshold": 0.5,           // 시선 이탈 임계값
     "distraction_consec_frames": 10, // 주의 이탈 연속 프레임 수
     "true_pitch_threshold": 10.0,    // 실제 고개 숙임 임계값
-    "head_rotation_threshold_for_gaze": 15.0  // gaze 감지 비활성화 고개 회전 임계값
+    "head_rotation_threshold_for_gaze": 15.0,  // gaze 감지 비활성화 고개 회전 임계값
+    "use_video_mode": true,          // MediaPipe 실행 모드 (true: VIDEO, false: LIVE_STREAM)
+    "min_hand_detection_confidence": 0.3,      // 손 감지 최소 신뢰도
+    "min_hand_presence_confidence": 0.3,       // 손 존재 최소 신뢰도
+    "hand_off_consec_frames": 5,     // 손 이탈 연속 프레임 수
+    "hand_size_ratio_threshold": 0.67,         // 손/얼굴 크기 비율 임계값 (2/3)
+    "enable_hand_size_filtering": true,        // 손 크기 필터링 활성화 여부
+    "face_position_threshold": 0.3,            // 얼굴 위치 편차 허용 임계값 (얼굴 크기 대비 비율)
+    "face_size_threshold": 0.5,                // 얼굴 크기 차이 허용 임계값 (비율)
+    "enable_face_position_filtering": true     // 얼굴 위치 필터링 활성화 여부
   }
 }
 ```
@@ -111,6 +128,42 @@ config.json
 ### 연속 프레임 수 조정
 - **빠른 감지**: `consec_frames` 값을 낮춤 (예: 15 → 10)
 - **안정적 감지**: `consec_frames` 값을 높임 (예: 15 → 20)
+
+## 🆕 새로운 기능 설정
+
+### 동적 눈 깜빡임 임계값 (MediaPipe)
+MediaPipe는 고개 각도에 따라 눈 깜빡임 임계값을 동적으로 조정합니다:
+- **정면**: `eye_blink_threshold` (0.3) - 기본값
+- **고개 들음**: `eye_blink_threshold_head_up` (0.2) - 더 관대
+- **고개 숙임**: `eye_blink_threshold_head_down` (0.25) - 중간
+
+### 손 크기 필터링 (MediaPipe)
+후방 승객의 작은 손을 무시하기 위한 설정:
+- **활성화**: `enable_hand_size_filtering: true`
+- **임계값**: `hand_size_ratio_threshold: 0.67` (손 크기가 얼굴의 2/3보다 작으면 무시)
+- **비활성화**: `enable_hand_size_filtering: false`
+
+### 눈 열림 확인 (Dlib)
+눈이 열린 상태를 안정적으로 확인하기 위한 설정:
+- **빠른 확인**: `eye_open_consec_frames: 3` (3프레임 연속 열림)
+- **안정적 확인**: `eye_open_consec_frames: 5` (5프레임 연속 열림)
+- **매우 안정적**: `eye_open_consec_frames: 8` (8프레임 연속 열림)
+
+### MediaPipe 실행 모드
+- **VIDEO 모드**: `use_video_mode: true` (파일/웹캠용, 동기 처리)
+- **LIVE_STREAM 모드**: `use_video_mode: false` (실시간용, 비동기 처리)
+
+### 얼굴 위치 필터링 (Dlib & MediaPipe)
+캘리브레이션 시 저장된 운전자의 얼굴 위치와 크기를 기준으로 다른 사람의 얼굴을 필터링합니다:
+- **활성화**: `enable_face_position_filtering: true`
+- **위치 임계값**: `face_position_threshold: 0.3` (얼굴 크기의 30% 이내)
+- **크기 임계값**: `face_size_threshold: 0.5` (얼굴 크기의 50% 이내)
+- **비활성화**: `enable_face_position_filtering: false`
+
+**작동 원리**:
+1. 캘리브레이션 시 운전자의 얼굴 중심 위치와 크기를 저장
+2. 매 프레임마다 감지된 얼굴이 저장된 위치/크기 범위 내에 있는지 확인
+3. 범위를 벗어나면 다른 사람으로 판단하여 분석에서 제외
 
 ## ⚠️ 주의사항
 

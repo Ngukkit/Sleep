@@ -12,6 +12,10 @@ from config_manager import get_mediapipe_config
 
 # Constants - now loaded from config
 EYE_BLINK_THRESHOLD = get_mediapipe_config("eye_blink_threshold", 0.3)
+EYE_BLINK_THRESHOLD_HEAD_UP = get_mediapipe_config("eye_blink_threshold_head_up", 0.2)
+EYE_BLINK_THRESHOLD_HEAD_DOWN = get_mediapipe_config("eye_blink_threshold_head_down", 0.25)
+HEAD_UP_THRESHOLD_FOR_EYE = get_mediapipe_config("head_up_threshold_for_eye", -10.0)
+HEAD_DOWN_THRESHOLD_FOR_EYE = get_mediapipe_config("head_down_threshold_for_eye", 8.0)
 JAW_OPEN_THRESHOLD = get_mediapipe_config("jaw_open_threshold", 0.4)
 DROWSY_CONSEC_FRAMES = get_mediapipe_config("drowsy_consec_frames", 15)
 YAWN_CONSEC_FRAMES = get_mediapipe_config("yawn_consec_frames", 30)
@@ -35,6 +39,10 @@ HAND_OFF_CONSEC_FRAMES = get_mediapipe_config("hand_off_consec_frames", 5)
 TRUE_PITCH_THRESHOLD = get_mediapipe_config("true_pitch_threshold", 10.0)
 HEAD_ROTATION_THRESHOLD_FOR_GAZE = get_mediapipe_config("head_rotation_threshold_for_gaze", 15.0)
 
+# Hand size filtering constants
+HAND_SIZE_RATIO_THRESHOLD = get_mediapipe_config("hand_size_ratio_threshold", 0.67)
+ENABLE_HAND_SIZE_FILTERING = get_mediapipe_config("enable_hand_size_filtering", True)
+
 class MediaPipeAnalyzer:
     def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None):
         # GUI 호환성을 위해 기본값 설정
@@ -54,6 +62,15 @@ class MediaPipeAnalyzer:
         self.gaze_deviated_frame_count = 0
         self.is_calibrated = False
         self.just_calibrated = False  # 방금 캘리브레이션 완료 플래그
+        self.eyes_confirmed_closed = False  # Track if eyes are confirmed closed (like Dlib)
+        
+        # --- Face Position Calibration Variables ---
+        self.calibrated_face_center = None  # (x, y) coordinates of calibrated face center
+        self.calibrated_face_size = None    # (width, height) of calibrated face
+        self.calibrated_face_roi = None     # (x1, y1, x2, y2) ROI bounds
+        self.face_position_threshold = get_mediapipe_config("face_position_threshold", 0.3)  # Maximum allowed deviation from calibrated position (as ratio of face size)
+        self.face_size_threshold = get_mediapipe_config("face_size_threshold", 0.5)      # Maximum allowed size difference (as ratio)
+        self.enable_face_position_filtering = get_mediapipe_config("enable_face_position_filtering", True)  # Enable/disable face position filtering
 
         models_dir = Path(__file__).parent
         face_model_path = models_dir / "models" / "face_landmarker.task"
@@ -137,6 +154,38 @@ class MediaPipeAnalyzer:
             self.just_calibrated = True  # 다음 프레임에서 오프셋 설정
             self.is_calibrated = True
             
+            # --- Face Position and Size Calibration for Task API ---
+            # Calculate face center and size from landmarks
+            if hasattr(face_landmarks, 'landmark'):
+                # 기존 Face Mesh 방식
+                landmarks = face_landmarks.landmark
+                x_coords = [lm.x for lm in landmarks]
+                y_coords = [lm.y for lm in landmarks]
+            else:
+                # Task API 방식 - 리스트 형태
+                x_coords = [lm.x for lm in face_landmarks]
+                y_coords = [lm.y for lm in face_landmarks]
+            
+            face_center_x = np.mean(x_coords) * frame_size[1]
+            face_center_y = np.mean(y_coords) * frame_size[0]
+            self.calibrated_face_center = (face_center_x, face_center_y)
+            
+            face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
+            face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
+            self.calibrated_face_size = (face_width, face_height)
+            
+            # Calculate face ROI bounds with some margin
+            margin_x = face_width * 0.2
+            margin_y = face_height * 0.2
+            x1 = max(0, face_center_x - face_width/2 - margin_x)
+            y1 = max(0, face_center_y - face_height/2 - margin_y)
+            x2 = min(frame_size[1], face_center_x + face_width/2 + margin_x)
+            y2 = min(frame_size[0], face_center_y + face_height/2 + margin_y)
+            self.calibrated_face_roi = (x1, y1, x2, y2)
+            
+            print(f"[MediaPipeAnalyzer] Face position calibrated: center=({face_center_x:.1f}, {face_center_y:.1f}), "
+                  f"size=({face_width:.1f}, {face_height:.1f})")
+            
             print("[MediaPipeAnalyzer] Task API front pose calibration flag set.")
             return True
         else:
@@ -147,6 +196,32 @@ class MediaPipeAnalyzer:
                 self.mp_front_face_offset_yaw = -head_pose_data["yaw"]
                 self.mp_front_face_offset_pitch = -head_pose_data["pitch"]
                 self.mp_front_face_offset_roll = -head_pose_data["roll"]
+                
+                # --- Face Position and Size Calibration for Face Mesh ---
+                # Calculate face center and size from landmarks
+                landmarks = face_landmarks.landmark
+                x_coords = [lm.x for lm in landmarks]
+                y_coords = [lm.y for lm in landmarks]
+                
+                face_center_x = np.mean(x_coords) * frame_size[1]
+                face_center_y = np.mean(y_coords) * frame_size[0]
+                self.calibrated_face_center = (face_center_x, face_center_y)
+                
+                face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
+                face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
+                self.calibrated_face_size = (face_width, face_height)
+                
+                # Calculate face ROI bounds with some margin
+                margin_x = face_width * 0.2
+                margin_y = face_height * 0.2
+                x1 = max(0, face_center_x - face_width/2 - margin_x)
+                y1 = max(0, face_center_y - face_height/2 - margin_y)
+                x2 = min(frame_size[1], face_center_x + face_width/2 + margin_x)
+                y2 = min(frame_size[0], face_center_y + face_height/2 + margin_y)
+                self.calibrated_face_roi = (x1, y1, x2, y2)
+                
+                print(f"[MediaPipeAnalyzer] Face position calibrated: center=({face_center_x:.1f}, {face_center_y:.1f}), "
+                      f"size=({face_width:.1f}, {face_height:.1f})")
                 
                 # gaze 캘리브레이션 - 실제 현재 gaze 값 계산
                 try:
@@ -315,10 +390,17 @@ class MediaPipeAnalyzer:
         
         if face_mesh_results.multi_face_landmarks:
             face_landmarks = face_mesh_results.multi_face_landmarks[0]
+            
+            # Check if the detected face is within calibrated bounds
+            frame_size = (frame.shape[0], frame.shape[1])
+            if not self._is_face_within_calibrated_bounds(face_landmarks, frame_size):
+                # Face is outside calibrated bounds - treat as no face detected
+                results["is_distracted_no_face"] = True
+                return results
+            
             results["face_landmarks"] = face_landmarks
             
             # Head pose 계산
-            frame_size = (frame.shape[0], frame.shape[1])
             head_pose_data = self._get_mp_head_pose(frame_size, face_landmarks)
             
             if head_pose_data:
@@ -484,6 +566,14 @@ class MediaPipeAnalyzer:
         
         if face_result and face_result.face_landmarks:
             results["face_landmarks"] = face_result.face_landmarks[0]
+            
+            # Check if the detected face is within calibrated bounds
+            frame_size = (640, 480)  # Default frame size, should be passed from caller
+            if not self._is_face_within_calibrated_bounds(face_result.face_landmarks[0], frame_size):
+                # Face is outside calibrated bounds - treat as no face detected
+                results["is_distracted_no_face"] = True
+                return results
+            
             # 진짜 pitch 계산
             true_pitch = self.get_true_pitch_from_landmarks(face_result.face_landmarks[0])
             results["true_pitch"] = true_pitch
@@ -506,15 +596,58 @@ class MediaPipeAnalyzer:
                     b.category_name: b.score for b in face_result.face_blendshapes[0]
                 }
                 results["all_blendshapes"] = blendshapes
+                
+                # 먼저 head pose를 계산하여 동적 임계값 결정
+                current_pitch = 0.0
+                if face_result.facial_transformation_matrixes:
+                    head_pose = self._get_head_pose_from_matrix(
+                        face_result.facial_transformation_matrixes[0]
+                    )
+                    pitch, yaw, roll = head_pose
+                    
+                    # 방금 캘리브레이션 완료된 경우 현재 head pose 값을 캘리브레이션 오프셋으로 설정
+                    if self.just_calibrated:
+                        self.mp_front_face_offset_pitch = -pitch
+                        self.mp_front_face_offset_yaw = -yaw
+                        self.mp_front_face_offset_roll = -roll
+                        self.just_calibrated = False  # 플래그 초기화
+                        print(f"[MediaPipeAnalyzer] Head pose offsets updated after calibration: pitch={-pitch:.1f}, yaw={-yaw:.1f}, roll={-roll:.1f}")
+                    
+                    # 캘리브레이션된 오프셋 적용
+                    current_pitch = pitch + self.mp_front_face_offset_pitch
+                    current_yaw = yaw + self.mp_front_face_offset_yaw
+                    current_roll = roll + self.mp_front_face_offset_roll
+                    
+                    results["mp_head_pitch_deg"] = current_pitch
+                    results["mp_head_yaw_deg"] = current_yaw
+                    results["mp_head_roll_deg"] = current_roll
+                
+                # 고개 각도에 따른 동적 눈 감음 임계값 결정
+                if current_pitch < HEAD_UP_THRESHOLD_FOR_EYE:
+                    # 고개를 들었을 때 - 더 관대한 임계값
+                    dynamic_eye_threshold = EYE_BLINK_THRESHOLD_HEAD_UP
+                    print(f"[DEBUG] Head up detected (pitch={current_pitch:.1f}°), using lower eye threshold: {dynamic_eye_threshold}")
+                elif current_pitch > HEAD_DOWN_THRESHOLD_FOR_EYE:
+                    # 고개를 숙였을 때 - 중간 임계값
+                    dynamic_eye_threshold = EYE_BLINK_THRESHOLD_HEAD_DOWN
+                    print(f"[DEBUG] Head down detected (pitch={current_pitch:.1f}°), using medium eye threshold: {dynamic_eye_threshold}")
+                else:
+                    # 정면일 때 - 기본 임계값
+                    dynamic_eye_threshold = EYE_BLINK_THRESHOLD
+                    print(f"[DEBUG] Head normal (pitch={current_pitch:.1f}°), using default eye threshold: {dynamic_eye_threshold}")
+                
+                # 동적 임계값을 사용한 눈 감음 감지
                 left_eye_blink, right_eye_blink = (
                     blendshapes.get("eyeBlinkLeft", 0),
                     blendshapes.get("eyeBlinkRight", 0),
                 )
                 avg_blink = (left_eye_blink + right_eye_blink) / 2.0
                 results["ear_value"] = avg_blink
+                results["dynamic_eye_threshold"] = dynamic_eye_threshold  # 디버깅용
+                
                 self.eye_closed_frame_count = (
                     self.eye_closed_frame_count + 1
-                    if avg_blink > EYE_BLINK_THRESHOLD
+                    if avg_blink > dynamic_eye_threshold
                     else 0
                 )
                 if self.eye_closed_frame_count >= DROWSY_CONSEC_FRAMES:
@@ -647,7 +780,7 @@ class MediaPipeAnalyzer:
                 results["mp_head_yaw_deg"] = current_yaw
                 results["mp_head_roll_deg"] = current_roll
                 
-                # 정면 이탈 감지 (운전 상황에 맞게 조정) - pitch 제외하고 연속 프레임 카운터 사용
+                # 정면 이탈 감지 및 위험 상태 감지 (이미 위에서 계산된 head pose 사용)
                 if (abs(current_yaw) > MP_YAW_THRESHOLD or
                     abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
                     self.distraction_frame_counter += 1
@@ -680,12 +813,23 @@ class MediaPipeAnalyzer:
         left_hand_detected = False
         right_hand_detected = False
 
+        # 얼굴 랜드마크 가져오기 (크기 비교용)
+        face_landmarks = None
+        if face_result and face_result.face_landmarks:
+            face_landmarks = face_result.face_landmarks[0]
+
         if hand_result and hand_result.hand_landmarks:
             for i, handedness_list in enumerate(hand_result.handedness):
                 handedness, landmarks = (
                     handedness_list[0].category_name,
                     hand_result.hand_landmarks[i],
                 )
+                
+                # 손 크기 필터링 적용
+                if face_landmarks and self._should_ignore_hand(landmarks, face_landmarks):
+                    print(f"[MediaPipeAnalyzer] {handedness} hand ignored due to small size")
+                    continue
+                
                 if handedness == "Left":
                     results["left_hand_landmarks"] = landmarks
                     left_hand_detected = True
@@ -758,3 +902,136 @@ class MediaPipeAnalyzer:
         )
         self.face_landmarker.detect_async(mp_image, timestamp_ms)
         self.hand_landmarker.detect_async(mp_image, timestamp_ms)
+
+    def _calculate_face_size(self, face_landmarks):
+        """얼굴 크기를 계산합니다 (면적 기준)"""
+        if not face_landmarks:
+            return 0.0
+        
+        # 얼굴의 주요 포인트들을 사용하여 얼굴 크기 계산
+        # 코, 눈, 입의 좌표를 사용
+        try:
+            if hasattr(face_landmarks, 'landmark'):
+                # 기존 Face Mesh 방식
+                landmarks = face_landmarks.landmark
+                # 얼굴 윤곽선 포인트들 (0-16)
+                face_contour = [(landmarks[i].x, landmarks[i].y) for i in range(17)]
+            else:
+                # Task API 방식
+                landmarks = face_landmarks
+                face_contour = [(landmarks[i].x, landmarks[i].y) for i in range(17)]
+            
+            # 얼굴 윤곽선의 바운딩 박스 계산
+            x_coords = [p[0] for p in face_contour]
+            y_coords = [p[1] for p in face_contour]
+            
+            face_width = max(x_coords) - min(x_coords)
+            face_height = max(y_coords) - min(y_coords)
+            face_area = face_width * face_height
+            
+            return face_area
+        except Exception as e:
+            print(f"[MediaPipeAnalyzer] Error calculating face size: {e}")
+            return 0.0
+
+    def _calculate_hand_size(self, hand_landmarks):
+        """손 크기를 계산합니다 (면적 기준)"""
+        if not hand_landmarks:
+            return 0.0
+        
+        try:
+            if hasattr(hand_landmarks, 'landmark'):
+                # 기존 방식
+                landmarks = hand_landmarks.landmark
+                hand_points = [(landmarks[i].x, landmarks[i].y) for i in range(21)]
+            else:
+                # Task API 방식
+                landmarks = hand_landmarks
+                hand_points = [(landmarks[i].x, landmarks[i].y) for i in range(21)]
+            
+            # 손의 바운딩 박스 계산
+            x_coords = [p[0] for p in hand_points]
+            y_coords = [p[1] for p in hand_points]
+            
+            hand_width = max(x_coords) - min(x_coords)
+            hand_height = max(y_coords) - min(y_coords)
+            hand_area = hand_width * hand_height
+            
+            return hand_area
+        except Exception as e:
+            print(f"[MediaPipeAnalyzer] Error calculating hand size: {e}")
+            return 0.0
+
+    def _should_ignore_hand(self, hand_landmarks, face_landmarks):
+        """손 크기가 얼굴 크기의 2/3보다 작으면 무시할지 결정"""
+        if not ENABLE_HAND_SIZE_FILTERING:
+            return False
+        
+        if not hand_landmarks or not face_landmarks:
+            return False
+        
+        hand_area = self._calculate_hand_size(hand_landmarks)
+        face_area = self._calculate_face_size(face_landmarks)
+        
+        if face_area == 0.0:
+            return False
+        
+        hand_face_ratio = hand_area / face_area
+        should_ignore = hand_face_ratio < HAND_SIZE_RATIO_THRESHOLD
+        
+        if should_ignore:
+            print(f"[MediaPipeAnalyzer] Hand ignored: ratio={hand_face_ratio:.3f} < {HAND_SIZE_RATIO_THRESHOLD}")
+        
+        return should_ignore
+
+    def _is_face_within_calibrated_bounds(self, face_landmarks, frame_size):
+        """
+        Check if the current detected face is within the calibrated driver's position and size bounds.
+        Returns True if the face is likely the same driver, False if it's a different person.
+        """
+        if not self.enable_face_position_filtering:
+            return True  # If filtering is disabled, accept all faces
+        
+        if not self.is_calibrated or self.calibrated_face_center is None or self.calibrated_face_size is None:
+            return True  # If not calibrated, accept all faces
+        
+        # Calculate current face center and size
+        if hasattr(face_landmarks, 'landmark'):
+            # 기존 Face Mesh 방식
+            landmarks = face_landmarks.landmark
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+        else:
+            # Task API 방식 - 리스트 형태
+            x_coords = [lm.x for lm in face_landmarks]
+            y_coords = [lm.y for lm in face_landmarks]
+        
+        current_face_center_x = np.mean(x_coords) * frame_size[1]
+        current_face_center_y = np.mean(y_coords) * frame_size[0]
+        current_face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
+        current_face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
+        
+        # Check position deviation
+        calibrated_center_x, calibrated_center_y = self.calibrated_face_center
+        calibrated_width, calibrated_height = self.calibrated_face_size
+        
+        # Calculate position difference as ratio of face size
+        position_diff_x = abs(current_face_center_x - calibrated_center_x) / calibrated_width
+        position_diff_y = abs(current_face_center_y - calibrated_center_y) / calibrated_height
+        
+        # Check size difference
+        size_diff_width = abs(current_face_width - calibrated_width) / calibrated_width
+        size_diff_height = abs(current_face_height - calibrated_height) / calibrated_height
+        
+        # Check if within thresholds
+        position_ok = (position_diff_x < self.face_position_threshold and 
+                      position_diff_y < self.face_position_threshold)
+        size_ok = (size_diff_width < self.face_size_threshold and 
+                  size_diff_height < self.face_size_threshold)
+        
+        if not position_ok or not size_ok:
+            print(f"[MediaPipeAnalyzer] Face rejected - Position diff: ({position_diff_x:.2f}, {position_diff_y:.2f}), "
+                  f"Size diff: ({size_diff_width:.2f}, {size_diff_height:.2f})")
+            return False
+        
+        return True

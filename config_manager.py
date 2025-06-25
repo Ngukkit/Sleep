@@ -41,6 +41,10 @@ class ConfigManager:
             },
             "mediapipe": {
                 "eye_blink_threshold": 0.3,
+                "eye_blink_threshold_head_up": 0.2,
+                "eye_blink_threshold_head_down": 0.25,
+                "head_up_threshold_for_eye": -10.0,
+                "head_down_threshold_for_eye": 8.0,
                 "jaw_open_threshold": 0.4,
                 "drowsy_consec_frames": 15,
                 "yawn_consec_frames": 30,
@@ -55,9 +59,12 @@ class ConfigManager:
                 "distraction_consec_frames": 10,
                 "true_pitch_threshold": 10.0,
                 "head_rotation_threshold_for_gaze": 15.0,
+                "use_video_mode": True,
                 "min_hand_detection_confidence": 0.3,
                 "min_hand_presence_confidence": 0.3,
-                "hand_off_consec_frames": 5
+                "hand_off_consec_frames": 5,
+                "hand_size_ratio_threshold": 0.67,
+                "enable_hand_size_filtering": True
             },
             "3ddfa": {
                 "eye_ar_thresh": 0.22,
@@ -119,16 +126,21 @@ config_manager = ConfigManager()
 
 # 편의 함수들
 def get_dlib_config(key: str, default: Any = None) -> Any:
+    """Get Dlib configuration value"""
     return config_manager.get("dlib", key, default)
 
 def get_mediapipe_config(key: str, default: Any = None) -> Any:
+    """Get MediaPipe configuration value"""
     return config_manager.get("mediapipe", key, default)
 
 def get_3ddfa_config(key: str, default: Any = None) -> Any:
+    """Get 3DDFA configuration value"""
     return config_manager.get("3ddfa", key, default)
 
 def get_yolo_config(key: str, default: Any = None) -> Any:
+    """Get YOLO configuration value"""
     return config_manager.get("yolo", key, default)
 
 def get_general_config(key: str, default: Any = None) -> Any:
+    """Get general configuration value"""
     return config_manager.get("general", key, default) 
