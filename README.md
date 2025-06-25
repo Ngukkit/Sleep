@@ -2,6 +2,17 @@
 
 YOLOv5, Dlib, MediaPipe를 활용하여 운전자의 졸음, 하품, 주시 태만 등 다양한 상태를 실시간으로 감지하는 파이썬 기반 시스템입니다.
 
+## 📸 실행 화면
+
+### YOLO 모델 실행 화면
+![YOLO 모델 실행 화면](screenshot/03.png)
+
+### Dlib 모델 실행 화면
+![Dlib 모델 실행 화면](screenshot/25.png)
+
+### MediaPipe 모델 실행 화면
+![MediaPipe 모델 실행 화면](screenshot/51.png)
+
 ## 🚀 주요 기능
 
 - **통합 분석 모델**: YOLOv5, Dlib, MediaPipe를 선택적으로 사용하여 운전자의 얼굴과 손을 종합적으로 분석합니다.
