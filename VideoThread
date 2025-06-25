@@ -8,52 +8,12 @@ class VideoThread(QThread):
         self.yolo_detector = None
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
-        self.three_ddfa_analyzer = None
+        # self.three_ddfa_analyzer = None
 
         # Front Face Calibration related variables
         self._dlib_calibration_trigger = False
         self._mediapipe_calibration_trigger = False
         self._set_dlib_front_face_mode = False
         self._set_mediapipe_front_face_mode = False
-        self._three_ddfa_calibration_trigger = False
+        # self._three_ddfa_calibration_trigger = False
         self._set_3ddfa_front_face_mode = False
-
-    @property
-    def three_ddfa_calibration_trigger(self):
-        return self._three_ddfa_calibration_trigger
-
-    @three_ddfa_calibration_trigger.setter
-    def three_ddfa_calibration_trigger(self, value):
-        self._three_ddfa_calibration_trigger = value
-
-    @property
-    def set_3ddfa_front_face_mode(self):
-        return self._set_3ddfa_front_face_mode
-
-    @set_3ddfa_front_face_mode.setter
-    def set_3ddfa_front_face_mode(self, value):
-        self._set_3ddfa_front_face_mode = value
-
-    def run(self):
-        # ... existing code ...
-        if enable_3ddfa and self.three_ddfa_analyzer:
-            three_ddfa_results = self.three_ddfa_analyzer.analyze_frame(im0.copy())
-            im0 = three_ddfa_results['vis_image']
-            # --- 3DDFA 정면 캘리브레이션 트리거 처리 ---
-            if self.three_ddfa_calibration_trigger:
-                # 3DDFA analyzer에 현재 프레임의 랜드마크를 넘겨주어 캘리브레이션 수행
-                if three_ddfa_results.get("face_landmarks_3d") and len(three_ddfa_results["face_landmarks_3d"]) > 0:
-                    pitch, yaw, roll = None, None, None
-                    if "head_pose" in three_ddfa_results:
-                        pitch, yaw, roll = three_ddfa_results["head_pose"]
-                    calibrated_successfully = self.three_ddfa_analyzer.calibrate_front_pose(
-                        three_ddfa_results["face_landmarks_3d"], pitch, yaw, roll
-                    )
-                    if calibrated_successfully:
-                        print("[VideoThread] 3DDFA front pose calibrated successfully.")
-                    else:
-                        print("[VideoThread] 3DDFA front pose calibration failed (no landmarks).")
-                else:
-                    print("[VideoThread] 3DDFA front pose calibration failed (no face detected).")
-                self.three_ddfa_calibration_trigger = False # 캘리브레이션 요청 초기화
-        # ... existing code ... 
