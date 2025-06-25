@@ -139,7 +139,7 @@ class MediaPipeAnalyzer:
         self.head_up_frame_count, self.gaze_deviated_frame_count = 0, 0
         self.left_hand_off_frame_count, self.right_hand_off_frame_count = 0, 0
         self.distraction_frame_counter = 0  # Add distraction frame counter for consecutive detection
-        print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
+        # print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
 
     def close(self):
         if self.is_closed:
@@ -411,7 +411,8 @@ class MediaPipeAnalyzer:
             "mp_is_calibrated": self.is_calibrated,
             "mp_is_distracted_from_front": False,
             "is_pupil_gaze_deviated": False,
-            "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection
+            "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection,
+            "mp_head_pose_color": (100, 100, 100),  # Default grey color
         }
         
         # BGR -> RGB 변환
@@ -444,22 +445,32 @@ class MediaPipeAnalyzer:
                 current_roll = head_pose_data["roll"] + self.mp_front_face_offset_roll
                 
                 # 디버깅 출력 (캘리브레이션 상태 확인)
-                print(f"[DEBUG] Head pose: raw(pitch={head_pose_data['pitch']:.1f}, yaw={head_pose_data['yaw']:.1f}, roll={head_pose_data['roll']:.1f})")
-                print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
-                print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
+                # print(f"[DEBUG] Head pose: raw(pitch={head_pose_data['pitch']:.1f}, yaw={head_pose_data['yaw']:.1f}, roll={head_pose_data['roll']:.1f})")
+                # print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
+                # print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
                 
                 results["mp_head_pitch_deg"] = current_pitch
                 results["mp_head_yaw_deg"] = current_yaw
                 results["mp_head_roll_deg"] = current_roll
                 
-                # 정면 이탈 감지 (운전 상황에 맞게 조정)
-                if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                    abs(current_pitch) > MP_PITCH_THRESHOLD):
-                    results["is_distracted_from_front"] = True
-                    results["mp_is_distracted_from_front"] = True
-                    print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                # Head pose color based on calibration status (similar to Dlib)
+                if not self.is_calibrated:
+                    results["mp_head_pose_color"] = (100, 100, 100)  # Grey if not calibrated
+                    # 캘리브레이션 전에는 값을 0으로 설정
+                    results["mp_head_pitch_deg"] = 0.0
+                    results["mp_head_yaw_deg"] = 0.0
+                    results["mp_head_roll_deg"] = 0.0
                 else:
-                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
+                    # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                    if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                        abs(current_pitch) > MP_PITCH_THRESHOLD):
+                        results["is_distracted_from_front"] = True
+                        results["mp_is_distracted_from_front"] = True
+                        results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
+                        # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    else:
+                        results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
+                        # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
                 
                 # Gaze 계산 (간단한 방식)
                 # 눈동자 위치를 기반으로 gaze 계산
@@ -485,12 +496,12 @@ class MediaPipeAnalyzer:
                     self.calibrated_gaze_x = gaze_x
                     self.calibrated_gaze_y = gaze_y
                     print(f"[MediaPipeAnalyzer] Gaze updated after calibration: x={gaze_x:.3f}, y={gaze_y:.3f}")
-                # 캘리브레이션이 아직 완료되지 않았으면 현재 gaze 값을 캘리브레이션 값으로 저장
-                elif not self.is_calibrated:
-                    self.calibrated_gaze_x = gaze_x
-                    self.calibrated_gaze_y = gaze_y
-                    self.is_calibrated = True  # 캘리브레이션 완료 표시
-                    print(f"[MediaPipeAnalyzer] Gaze auto-calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                # 자동 캘리브레이션 제거 - 사용자가 Calibrate 버튼을 클릭할 때만 캘리브레이션
+                # elif not self.is_calibrated:
+                #     self.calibrated_gaze_x = gaze_x
+                #     self.calibrated_gaze_y = gaze_y
+                #     self.is_calibrated = True  # 캘리브레이션 완료 표시
+                #     print(f"[MediaPipeAnalyzer] Gaze auto-calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
                 
                 # 시선 이탈 감지 (캘리브레이션 적용)
                 gaze_diff = abs(gaze_x - self.calibrated_gaze_x)
@@ -585,6 +596,7 @@ class MediaPipeAnalyzer:
             "mp_head_roll_deg": 0.0,
             "mp_is_calibrated": self.is_calibrated,
             "mp_is_distracted_from_front": False,
+            "mp_head_pose_color": (100, 100, 100),  # Default grey color
             "gaze_x": 0.0,
             "gaze_y": 0.0,
             "is_gaze": False,
@@ -605,10 +617,9 @@ class MediaPipeAnalyzer:
         if face_result and face_result.face_landmarks:
             results["face_landmarks"] = face_result.face_landmarks[0]
             
-            # Check if the detected face is within calibrated bounds
             frame_size = (640, 480)  # Default frame size, should be passed from caller
-            if not self._is_face_within_calibrated_bounds(face_result.face_landmarks[0], frame_size):
-                # Face is outside calibrated bounds - treat as no face detected
+            # 캘리브레이션 직후 한 프레임만 얼굴 위치 필터링을 무시
+            if not self.just_calibrated and not self._is_face_within_calibrated_bounds(face_result.face_landmarks[0], frame_size):
                 results["is_distracted_no_face"] = True
                 return results
             
@@ -624,13 +635,13 @@ class MediaPipeAnalyzer:
                 self.calibrated_true_pitch = true_pitch
             if self.just_calibrated:
                 self.calibrated_true_pitch = true_pitch
-                print(f"[MediaPipeAnalyzer] True pitch calibrated: {true_pitch:.2f}")
+                # print(f"[MediaPipeAnalyzer] True pitch calibrated: {true_pitch:.2f}")
             true_pitch_diff = true_pitch - self.calibrated_true_pitch
-            print(f"[DEBUG] True pitch (nose-eye): {true_pitch:.2f} deg, diff={true_pitch_diff:.2f}")
+            # print(f"[DEBUG] True pitch (nose-eye): {true_pitch:.2f} deg, diff={true_pitch_diff:.2f}")
             # true_pitch로 고개 숙임 감지
             if abs(true_pitch_diff) > TRUE_PITCH_THRESHOLD:
                 results["is_head_down"] = True
-                print(f"[DEBUG] True pitch head down detected: |diff|={abs(true_pitch_diff):.2f} > {TRUE_PITCH_THRESHOLD}")
+                # print(f"[DEBUG] True pitch head down detected: |diff|={abs(true_pitch_diff):.2f} > {TRUE_PITCH_THRESHOLD}")
             else:
                 results["is_head_down"] = False
             if face_result.face_blendshapes:
@@ -668,15 +679,15 @@ class MediaPipeAnalyzer:
                 if current_pitch < HEAD_UP_THRESHOLD_FOR_EYE:
                     # 고개를 들었을 때 - 더 관대한 임계값
                     dynamic_eye_threshold = EYE_BLINK_THRESHOLD_HEAD_UP
-                    print(f"[DEBUG] Head up detected (pitch={current_pitch:.1f}°), using lower eye threshold: {dynamic_eye_threshold}")
+                    # print(f"[DEBUG] Head up detected (pitch={current_pitch:.1f}°), using lower eye threshold: {dynamic_eye_threshold}")
                 elif current_pitch > HEAD_DOWN_THRESHOLD_FOR_EYE:
                     # 고개를 숙였을 때 - 중간 임계값
                     dynamic_eye_threshold = EYE_BLINK_THRESHOLD_HEAD_DOWN
-                    print(f"[DEBUG] Head down detected (pitch={current_pitch:.1f}°), using medium eye threshold: {dynamic_eye_threshold}")
+                    # print(f"[DEBUG] Head down detected (pitch={current_pitch:.1f}°), using medium eye threshold: {dynamic_eye_threshold}")
                 else:
                     # 정면일 때 - 기본 임계값
                     dynamic_eye_threshold = EYE_BLINK_THRESHOLD
-                    print(f"[DEBUG] Head normal (pitch={current_pitch:.1f}°), using default eye threshold: {dynamic_eye_threshold}")
+                    # print(f"[DEBUG] Head normal (pitch={current_pitch:.1f}°), using default eye threshold: {dynamic_eye_threshold}")
                 
                 # 동적 임계값을 사용한 눈 감음 감지
                 left_eye_blink, right_eye_blink = (
@@ -726,12 +737,12 @@ class MediaPipeAnalyzer:
                     self.calibrated_gaze_x = gaze_x
                     self.calibrated_gaze_y = gaze_y
                     print(f"[MediaPipeAnalyzer] Gaze updated after calibration: x={gaze_x:.3f}, y={gaze_y:.3f}")
-                # 캘리브레이션이 아직 완료되지 않았으면 현재 gaze 값을 캘리브레이션 값으로 저장
-                elif not self.is_calibrated:
-                    self.calibrated_gaze_x = gaze_x
-                    self.calibrated_gaze_y = gaze_y
-                    self.is_calibrated = True  # 캘리브레이션 완료 표시
-                    print(f"[MediaPipeAnalyzer] Gaze auto-calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
+                # 자동 캘리브레이션 제거 - 사용자가 Calibrate 버튼을 클릭할 때만 캘리브레이션
+                # elif not self.is_calibrated:
+                #     self.calibrated_gaze_x = gaze_x
+                #     self.calibrated_gaze_y = gaze_y
+                #     self.is_calibrated = True  # 캘리브레이션 완료 표시
+                #     print(f"[MediaPipeAnalyzer] Gaze auto-calibrated: x={gaze_x:.3f}, y={gaze_y:.3f}")
                 
                 # 시선 이탈 감지 (캘리브레이션 적용)
                 gaze_diff = abs(gaze_x - self.calibrated_gaze_x)
@@ -780,9 +791,9 @@ class MediaPipeAnalyzer:
                         results["is_gaze"] = False
                         results["gaze_disabled_due_to_head_rotation"] = True
                     
-                    print(f"[DEBUG] Gaze compensation: raw({gaze_x:.3f}, {gaze_y:.3f}) -> compensated({compensated_gaze_x:.3f}, {compensated_gaze_y:.3f})")
-                    print(f"[DEBUG] Head pose for compensation: yaw={yaw:.1f}°, pitch={pitch:.1f}°")
-                    print(f"[DEBUG] Gaze detection: {'enabled' if abs(yaw) < HEAD_ROTATION_THRESHOLD_FOR_GAZE else 'disabled (head rotated)'}")
+                    # print(f"[DEBUG] Gaze compensation: raw({gaze_x:.3f}, {gaze_y:.3f}) -> compensated({compensated_gaze_x:.3f}, {compensated_gaze_y:.3f})")
+                    # print(f"[DEBUG] Head pose for compensation: yaw={yaw:.1f}°, pitch={pitch:.1f}°")
+                    # print(f"[DEBUG] Gaze detection: {'enabled' if abs(yaw) < HEAD_ROTATION_THRESHOLD_FOR_GAZE else 'disabled (head rotated)'}")
                 
                 gaze_magnitude = np.sqrt(gaze_x**2 + gaze_y**2)
                 self.gaze_deviated_frame_count = (
@@ -814,36 +825,45 @@ class MediaPipeAnalyzer:
                 current_roll = roll + self.mp_front_face_offset_roll
                 
                 # 디버깅 출력 (캘리브레이션 상태 확인)
-                print(f"[DEBUG] Head pose: raw(pitch={pitch:.1f}, yaw={yaw:.1f}, roll={roll:.1f})")
-                print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
-                print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
+                # print(f"[DEBUG] Head pose: raw(pitch={pitch:.1f}, yaw={yaw:.1f}, roll={roll:.1f})")
+                # print(f"[DEBUG] Head pose: offsets(pitch={self.mp_front_face_offset_pitch:.1f}, yaw={self.mp_front_face_offset_yaw:.1f}, roll={self.mp_front_face_offset_roll:.1f})")
+                # print(f"[DEBUG] Head pose: calibrated(pitch={current_pitch:.1f}, yaw={current_yaw:.1f}, roll={current_roll:.1f})")
                 
                 results["mp_head_pitch_deg"] = current_pitch
                 results["mp_head_yaw_deg"] = current_yaw
                 results["mp_head_roll_deg"] = current_roll
                 
-                # 정면 이탈 감지 및 위험 상태 감지 (이미 위에서 계산된 head pose 사용)
-                if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                    abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
-                    self.distraction_frame_counter += 1
-                    if self.distraction_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+                # Head pose color based on calibration status (similar to Dlib)
+                if not self.is_calibrated:
+                    results["mp_head_pose_color"] = (100, 100, 100)  # Grey if not calibrated
+                    # 캘리브레이션 전에는 값을 0으로 설정
+                    results["mp_head_pitch_deg"] = 0.0
+                    results["mp_head_yaw_deg"] = 0.0
+                    results["mp_head_roll_deg"] = 0.0
+                else:
+                    # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                    if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                        abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
                         results["is_distracted_from_front"] = True
                         results["mp_is_distracted_from_front"] = True
-                    print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
-                else:
-                    self.distraction_frame_counter = 0  # Reset counter when not distracted
-                    print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
+                        results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
+                        # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
+                    else:
+                        results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
+                        # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
                 
                 # Pitch는 즉시 감지 (기존 로직 유지)
                 if abs(current_pitch) > MP_PITCH_THRESHOLD:
                     results["is_head_down"] = True
-                    print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    # print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
                 
                 # 위험 상태 감지: 눈을 감은 상태에서 고개가 숙여지는 경우
                 if results["is_drowsy"] and results["is_head_down"]:
                     results["is_dangerous_condition"] = True
                     results["dangerous_condition_message"] = "DANGER: Eyes Closed + Head Down!"
-                    print("[MediaPipeAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
+                    # 캘리브레이션된 경우에만 메시지 출력
+                    if self.is_calibrated:
+                        print("[MediaPipeAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
         else:
             results["is_distracted_no_face"] = True
 
@@ -869,7 +889,9 @@ class MediaPipeAnalyzer:
                 
                 # 손 크기 필터링 적용
                 if face_landmarks and self._should_ignore_hand(landmarks, face_landmarks):
-                    print(f"[MediaPipeAnalyzer] {handedness} hand ignored due to small size")
+                    # 캘리브레이션된 경우에만 메시지 출력
+                    if self.is_calibrated:
+                        print(f"[MediaPipeAnalyzer] {handedness} hand ignored due to small size")
                     continue
                 
                 if handedness == "Left":
@@ -887,7 +909,9 @@ class MediaPipeAnalyzer:
             results["hand_warning_message"] = "HANDS OFF STEERING WHEEL!"
             results["is_left_hand_off"] = True
             results["is_right_hand_off"] = True
-            print("[MediaPipeAnalyzer] Two hands detected - RED WARNING")
+            # 캘리브레이션된 경우에만 메시지 출력
+            if self.is_calibrated:
+                print("[MediaPipeAnalyzer] Two hands detected - RED WARNING")
         elif left_hand_detected or right_hand_detected:
             # 한 손만 감지됨 - 노란색 경고
             results["hand_status"] = "One Hand Detected"
@@ -897,13 +921,17 @@ class MediaPipeAnalyzer:
                 results["is_left_hand_off"] = True
             if right_hand_detected:
                 results["is_right_hand_off"] = True
-            print("[MediaPipeAnalyzer] One hand detected - YELLOW WARNING")
+            # 캘리브레이션된 경우에만 메시지 출력
+            if self.is_calibrated:
+                print("[MediaPipeAnalyzer] One hand detected - YELLOW WARNING")
         else:
             # 손이 감지되지 않음 - 정상 (녹색)
             results["hand_status"] = "No Hands Detected"
             results["hand_warning_color"] = "green"
             results["hand_warning_message"] = "Hands on wheel"
-            print("[MediaPipeAnalyzer] No hands detected - NORMAL")
+            # 캘리브레이션된 경우에만 메시지 출력
+            if self.is_calibrated:
+                print("[MediaPipeAnalyzer] No hands detected - NORMAL")
             
         # This will be used by the visualizer
         results["are_both_hands_on_wheel"] = not (results["is_left_hand_off"] or results["is_right_hand_off"])
@@ -1021,7 +1049,7 @@ class MediaPipeAnalyzer:
         hand_face_ratio = hand_area / face_area
         should_ignore = hand_face_ratio < HAND_SIZE_RATIO_THRESHOLD
         
-        if should_ignore:
+        if should_ignore and self.is_calibrated:
             print(f"[MediaPipeAnalyzer] Hand ignored: ratio={hand_face_ratio:.3f} < {HAND_SIZE_RATIO_THRESHOLD}")
         
         return should_ignore

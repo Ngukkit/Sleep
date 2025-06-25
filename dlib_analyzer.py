@@ -99,6 +99,7 @@ class DlibAnalyzer:
         self.eye_detection_stable_frames = 0  # Counter for stable eye detection
         self.eyes_confirmed_closed = False  # Flag to track if eyes are confirmed closed
         self.eyes_closed_during_head_down = False  # Flag to maintain eye state during head down
+        self.previous_eye_state = "unknown"  # Track previous eye state: "open", "closed", "unknown"
         
         # --- Relative eye detection variables ---
         self.calibrated_ear = None  # EAR value at calibration time
@@ -299,6 +300,24 @@ class DlibAnalyzer:
                 self.no_face_frame_counter += 1
                 if self.no_face_frame_counter >= 5:  # After 5 frames of no valid face
                     results["is_distracted_from_front"] = True
+                
+                # 얼굴이 거부되었을 때도 눈 상태 유지 (no face와 동일한 로직)
+                if self.eyes_confirmed_closed or self.ear_frame_counter > 0 or self.previous_eye_state == "closed":
+                    results["is_drowsy_ear"] = True
+                    results["ear_status"] = "Closed (Face Rejected)"
+                    results["eye_color"] = (0, 0, 255) # Red for closed eyes
+                # 이전에 눈이 열려있었다면 계속 열린 상태로 유지
+                elif self.eye_open_frame_counter >= EYE_OPEN_CONSEC_FRAMES or self.previous_eye_state == "open":
+                    results["ear_status"] = "Open (Face Rejected)"
+                    results["eye_color"] = (0, 255, 0) # Green for open eyes
+                # 이전 상태가 불분명하면 N/A로 표시
+                else:
+                    results["ear_status"] = "N/A (Face Rejected)"
+                    results["eye_color"] = (100, 100, 100) # Grey for unknown
+                
+                # Head pose도 거부된 상태로 표시 (회색)
+                results["head_pose_color"] = (100, 100, 100)  # Grey for rejected
+                
                 return results
             
             results["landmark_points"] = shape.tolist() # Convert numpy array to list for JSON/display
@@ -351,6 +370,7 @@ class DlibAnalyzer:
                         results["is_drowsy_ear"] = True
                         results["ear_status"] = "Closed"
                         results["eye_color"] = (0, 0, 255) # Red for closed eyes
+                        self.previous_eye_state = "closed"
                 else:
                     self.ear_frame_counter += 1
                     if self.ear_frame_counter >= EYE_AR_CONSEC_FRAMES:
@@ -358,6 +378,7 @@ class DlibAnalyzer:
                         results["ear_status"] = "Closed"
                         results["eye_color"] = (0, 0, 255) # Red for closed eyes
                         self.eyes_confirmed_closed = True  # Mark eyes as confirmed closed
+                        self.previous_eye_state = "closed"
                         # If head is down when eyes are confirmed closed, maintain this state
                         if is_head_down_current:
                             self.eyes_closed_during_head_down = True
@@ -368,6 +389,7 @@ class DlibAnalyzer:
                     results["is_drowsy_ear"] = True
                     results["ear_status"] = "Closed (Maintained)"
                     results["eye_color"] = (0, 0, 255) # Red for closed eyes
+                    self.previous_eye_state = "closed"
                 else:
                     # Normal eye open detection with counter
                     self.ear_frame_counter = 0  # Reset closed counter
@@ -380,6 +402,7 @@ class DlibAnalyzer:
                         results["eye_color"] = (0, 255, 0) # Green for open eyes
                         self.eyes_confirmed_closed = False  # Reset confirmed closed flag
                         self.eyes_closed_during_head_down = False  # Reset head down eye state
+                        self.previous_eye_state = "open"
                     else:
                         # Eyes appear open but not enough consecutive frames yet
                         # Maintain previous state until confirmed
@@ -387,9 +410,11 @@ class DlibAnalyzer:
                             results["is_drowsy_ear"] = True
                             results["ear_status"] = "Closed (Opening)"
                             results["eye_color"] = (0, 165, 255) # Orange for transitioning
+                            self.previous_eye_state = "closed"
                         else:
                             results["ear_status"] = "Opening"
                             results["eye_color"] = (0, 165, 255) # Orange for transitioning
+                            self.previous_eye_state = "unknown"
             
             # Reset head down eye state when head returns to normal position
             if not is_head_down_current:
@@ -451,16 +476,19 @@ class DlibAnalyzer:
             if results["is_drowsy_ear"] and results["is_head_down"]:
                 results["is_dangerous_condition"] = True
                 results["dangerous_condition_message"] = "DANGER: Eyes Closed + Head Down!"
-                print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
+                # print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
             # 추가: 눈이 확인된 상태에서 고개를 숙이면 즉시 위험 경고
             elif self.eyes_confirmed_closed and results["is_head_down"]:
                 results["is_dangerous_condition"] = True
                 results["dangerous_condition_message"] = "DANGER: Confirmed Eyes Closed + Head Down!"
-                print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Confirmed eyes closed and head down!")
+                # print("[DlibAnalyzer] DANGEROUS CONDITION DETECTED: Confirmed eyes closed and head down!")
         else:
-            # 얼굴이 인식되지 않을 때 연속 프레임 카운터 사용
+            # 얼굴이 아예 감지되지 않은 경우
             self.no_face_frame_counter += 1
-            if self.no_face_frame_counter >= DISTRACTION_CONSEC_FRAMES:
+            if self.no_face_frame_counter >= 5:  # 기존 rejected와 동일하게 5프레임
                 results["is_distracted_from_front"] = True
+            results["is_distracted_no_face"] = True
+            # 눈 상태 유지 로직(원하면 추가)
+            return results
 
         return results

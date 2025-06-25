@@ -69,7 +69,7 @@ class YOLOv5Detector:
                 # Keep only the largest face
                 det[0] = det[0][largest_idx:largest_idx+1]
                 
-                print(f"[YOLOv5Detector] Multiple faces detected ({len(areas)}), selected largest face (area: {areas[largest_idx]:.0f})")
+                # print(f"[YOLOv5Detector] Multiple faces detected ({len(areas)}), selected largest face (area: {areas[largest_idx]:.0f})")
 
         return det[0], (t2 - t1), (t3 - t2) # Return detections, inference time, nms time
 

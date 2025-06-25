@@ -203,13 +203,13 @@ class VideoThread(QThread):
         
         # 모듈 초기화
         if enable_yolo:
-            print("[VideoThread] Initializing YOLOv5 Detector...")
+            # print("[VideoThread] Initializing YOLOv5 Detector...")
             self.yolo_detector = yolov5_detector.YOLOv5Detector(weights=weights, device=device, imgsz=imgsz, half=half)
         else: # Yolo가 비활성화된 경우 None으로 명시적 설정
             self.yolo_detector = None
         
         if enable_dlib:
-            print("[VideoThread] Initializing Dlib Analyzer...")
+            # print("[VideoThread] Initializing Dlib Analyzer...")
             dlib_predictor_path = str(ROOT / 'models' / 'shape_predictor_68_face_landmarks.dat')
             if not Path(dlib_predictor_path).exists():
                 print(f"Error: dlib_shape_predictor_68_face_landmarks.dat not found at {dlib_predictor_path}")
@@ -219,7 +219,7 @@ class VideoThread(QThread):
                 self.dlib_analyzer = dlib_analyzer.DlibAnalyzer(dlib_predictor_path)
 
         if enable_mediapipe:
-            print(f"[VideoThread] Initializing MediaPipe Analyzer...")
+            # print(f"[VideoThread] Initializing MediaPipe Analyzer...")
             
             # config.json에서 MediaPipe 모드 설정 읽기
             from config_manager import get_mediapipe_config
@@ -231,7 +231,7 @@ class VideoThread(QThread):
             )
             
             mode_str = "VIDEO" if use_video_mode else "LIVE_STREAM"
-            print(f"[VideoThread] MediaPipe mode: {mode_str} (from config.json)")
+            # print(f"[VideoThread] MediaPipe mode: {mode_str} (from config.json)")
             
             self.mediapipe_analyzer = mediapipe_analyzer.MediaPipeAnalyzer(
                 running_mode=running_mode,
@@ -243,7 +243,7 @@ class VideoThread(QThread):
 
         # Handle image sequence vs video/webcam
         if self.is_image_sequence:
-            print(f"[VideoThread] Processing image sequence with {len(self.image_files)} images")
+            # print(f"[VideoThread] Processing image sequence with {len(self.image_files)} images")
             self.process_image_sequence()
         else:
             # Original video/webcam processing
@@ -274,7 +274,7 @@ class VideoThread(QThread):
                                  conf_thres, iou_thres, max_det, hide_labels, hide_conf)
 
             cap.release()
-            print("[VideoThread] Video capture released.")
+            # print("[VideoThread] Video capture released.")
         
         self.is_running = False
 
@@ -332,11 +332,14 @@ class VideoThread(QThread):
                         (frame_h, frame_w), np.array(dlib_results["landmark_points"])
                     )
                     if calibrated_successfully:
-                        print("[VideoThread] Dlib front pose calibrated successfully.")
+                        # print("[VideoThread] Dlib front pose calibrated successfully.")
+                        pass
                     else:
-                        print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
+                        # print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
+                        pass
                 else:
-                    print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                    # print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                    pass
                 self.dlib_calibration_trigger = False # 캘리브레이션 요청 초기화
         
         # --- 3. MediaPipe Analysis ---
@@ -355,6 +358,7 @@ class VideoThread(QThread):
 
             # --- MediaPipe 정면 캘리브레이션 트리거 처리 ---
             if self.mediapipe_calibration_trigger:
+                print(f"[VideoThread] MediaPipe calibration triggered. Face landmarks: {mediapipe_results.get('face_landmarks') is not None}")
                 if mediapipe_results.get("face_landmarks"):
                     calibrated_successfully = self.mediapipe_analyzer.calibrate_front_pose(
                         (frame_h, frame_w), mediapipe_results["face_landmarks"]
@@ -383,17 +387,19 @@ class VideoThread(QThread):
             
             # 디버깅: MediaPipe 결과 출력
             if mediapipe_results:
-                print(f"[DEBUG] MediaPipe results keys: {list(mediapipe_results.keys())}")
-                if mediapipe_results.get("is_drowsy"):
-                    print("[DEBUG] MediaPipe: Drowsy detected!")
-                if mediapipe_results.get("is_yawning"):
-                    print("[DEBUG] MediaPipe: Yawning detected!")
-                if mediapipe_results.get("is_pupil_gaze_deviated"):
-                    print("[DEBUG] MediaPipe: Pupil gaze deviated!")
-                if mediapipe_results.get("is_dangerous_condition"):
-                    print("[DEBUG] MediaPipe: Dangerous condition detected!")
+                # print(f"[DEBUG] MediaPipe results keys: {list(mediapipe_results.keys())}")
+                # if mediapipe_results.get("is_drowsy"):
+                #     print("[DEBUG] MediaPipe: Drowsy detected!")
+                # if mediapipe_results.get("is_yawning"):
+                #     print("[DEBUG] MediaPipe: Yawning detected!")
+                # if mediapipe_results.get("is_pupil_gaze_deviated"):
+                #     print("[DEBUG] MediaPipe: Pupil gaze deviated!")
+                # if mediapipe_results.get("is_dangerous_condition"):
+                #     print("[DEBUG] MediaPipe: Dangerous condition detected!")
+                pass
             else:
-                print("[DEBUG] MediaPipe results is empty")
+                # print("[DEBUG] MediaPipe results is empty")
+                pass
 
         # --- 5. Driver Status Analysis ---
         if enable_dlib and dlib_results:
@@ -441,7 +447,7 @@ class VideoThread(QThread):
 
     def stop(self):
         self.is_running = False
-        print("[VideoThread] Stopping video thread...")
+        # print("[VideoThread] Stopping video thread...")
         self.wait()
 
     def analyze_driver_status(self, dlib_results):
@@ -711,6 +717,14 @@ class MainApp(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.image_label.clear()
+        
+        # 감지 중지 시 캘리브레이션 모드 비활성화
+        if self.is_calibration_mode:
+            self.is_calibration_mode = False
+            self.btn_calibrate.setText("Calibrate Front Face")
+            self.btn_calibrate.setStyleSheet("")
+            print("Calibration mode automatically disabled due to detection stop.")
+        
         # 감지 중지 시에는 정면 설정 체크박스를 다시 활성화
         self.update_front_face_checkbox_states()
         self.is_set_mediapipe_front_face_mode = False
@@ -873,6 +887,24 @@ class MainApp(QWidget):
 
 
 if __name__ == "__main__":
+    # GTK/Gdk 경고 메시지 숨기기
+    import os
+    import sys
+    
+    # 환경 변수 설정으로 경고 숨기기
+    os.environ['GDK_SYNCHRONIZE'] = '0'
+    os.environ['GTK_DEBUG'] = '0'
+    os.environ['G_MESSAGES_DEBUG'] = 'none'
+    
+    # stderr 리다이렉션으로 경고 메시지 숨기기 (선택사항)
+    # import contextlib
+    # with open(os.devnull, 'w') as devnull:
+    #     with contextlib.redirect_stderr(devnull):
+    #         app = QApplication(sys.argv)
+    #         main_app = MainApp()
+    #         main_app.show()
+    #         sys.exit(app.exec_())
+    
     app = QApplication(sys.argv)
     main_app = MainApp()
     main_app.show()

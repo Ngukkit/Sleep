@@ -367,13 +367,13 @@ class VideoThread(QThread):
         
         # 모듈 초기화
         if enable_yolo:
-            print("[VideoThread] Initializing YOLOv5 Detector...")
+            # print("[VideoThread] Initializing YOLOv5 Detector...")
             self.yolo_detector = yolov5_detector.YOLOv5Detector(weights=weights, device=device, imgsz=imgsz, half=half)
         else: # Yolo가 비활성화된 경우 None으로 명시적 설정
             self.yolo_detector = None
         
         if enable_dlib:
-            print("[VideoThread] Initializing Dlib Analyzer...")
+            # print("[VideoThread] Initializing Dlib Analyzer...")
             dlib_predictor_path = str(ROOT / 'models' / 'shape_predictor_68_face_landmarks.dat')
             if not Path(dlib_predictor_path).exists():
                 print(f"Error: dlib_shape_predictor_68_face_landmarks.dat not found at {dlib_predictor_path}")
@@ -383,7 +383,7 @@ class VideoThread(QThread):
                 self.dlib_analyzer = dlib_analyzer.DlibAnalyzer(dlib_predictor_path)
 
         if enable_mediapipe:
-            print(f"[VideoThread] Initializing MediaPipe Analyzer in {mediapipe_mode_str} mode...")
+            # print(f"[VideoThread] Initializing MediaPipe Analyzer in {mediapipe_mode_str} mode...")
             
             running_mode = (
                 vision.RunningMode.LIVE_STREAM 
@@ -441,11 +441,14 @@ class VideoThread(QThread):
                             (frame_h, frame_w), np.array(dlib_results["landmark_points"])
                         )
                         if calibrated_successfully:
-                            print("[VideoThread] Dlib front pose calibrated successfully.")
+                            # print("[VideoThread] Dlib front pose calibrated successfully.")
+                            pass
                         else:
-                            print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
+                            # print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
+                            pass
                     else:
-                        print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                        # print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                        pass
                     self.dlib_calibration_trigger = False # 캘리브레이션 요청 초기화
             
             # --- 3. MediaPipe Analysis ---
@@ -469,11 +472,14 @@ class VideoThread(QThread):
                             (frame_h, frame_w), mediapipe_results["face_landmarks"]
                         )
                         if calibrated_successfully:
-                            print("[VideoThread] MediaPipe front pose calibrated successfully.")
+                            # print("[VideoThread] MediaPipe front pose calibrated successfully.")
+                            pass
                         else:
-                            print("[VideoThread] MediaPipe front pose calibration failed (no landmarks).")
+                            # print("[VideoThread] MediaPipe front pose calibration failed (no landmarks).")
+                            pass
                     else:
-                        print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
+                        # print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
+                        pass
                     self.mediapipe_calibration_trigger = False # 캘리브레이션 요청 초기화
 
             # --- 4. Visualization ---
@@ -523,12 +529,12 @@ class VideoThread(QThread):
             # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
 
         cap.release()
-        print("[VideoThread] Video capture released.")
+        # print("[VideoThread] Video capture released.")
         self.is_running = False
 
     def stop(self):
         self.is_running = False
-        print("[VideoThread] Stopping video thread...")
+        # print("[VideoThread] Stopping video thread...")
         self.wait()
 
 

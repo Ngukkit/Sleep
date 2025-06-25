@@ -97,7 +97,7 @@ class Visualizer:
             dangerous_message = dlib_results.get("dangerous_condition_message", "DANGER: Eyes Closed + Head Down!")
             cv2.putText(frame, dangerous_message, (self.text_x_align, self.dlib_info_start_y - 40), 
                        self.font, self.font_scale + 0.2, (0, 0, 255), 3)  # 더 큰 폰트와 두꺼운 선
-            print(f"[Visualizer] Displaying Dlib dangerous condition: {dangerous_message}")
+            # print(f"[Visualizer] Displaying Dlib dangerous condition: {dangerous_message}")
 
         cv2.putText(frame, f"Dlib Eye: {dlib_results.get('ear_status', 'N/A')}", (self.text_x_align, self.dlib_info_start_y),
                     self.font, self.font_scale, eye_color, self.thickness, cv2.LINE_AA)
@@ -125,7 +125,7 @@ class Visualizer:
             head_down_text = "Dlib Head: DOWN!"
             head_down_color = (0, 0, 255)  # 빨간색
         else:
-            head_down_text = "Dlib Head: OK"
+            head_down_text = "Dlib Head: NORMAL"
             head_down_color = (0, 255, 0)  # 초록색
         cv2.putText(frame, head_down_text, (self.text_x_align, self.dlib_info_start_y + 6 * self.text_spacing),
                     self.font, self.font_scale, head_down_color, self.thickness, cv2.LINE_AA)
@@ -167,7 +167,6 @@ class Visualizer:
         return frame
 
     def draw_mediapipe_results(self,image, mp_display_results):
-
         
         # ----------------------------------------------------
         # 1. 얼굴 랜드마크 그리기 (mp_face_mesh.FACEMESH_TESSELATION 사용)
@@ -270,132 +269,140 @@ class Visualizer:
             cv2.putText(image, dangerous_message, (text_x_offset, text_y_offset), 
                        font, font_scale + 0.2, danger_color, 3)  # 더 큰 폰트와 두꺼운 선
             text_y_offset += 40
-            print(f"[Visualizer] Displaying dangerous condition: {dangerous_message}")
+            # print(f"[Visualizer] Displaying dangerous condition: {dangerous_message}")
         
         # ⭐ 현재 Head Pitch 값 상시 표시
         if 'mp_head_pitch_deg' in mp_display_results:
             pitch_val = mp_display_results['mp_head_pitch_deg']
-            # 참고: 이 값은 mediapipe_analyzer.py에서 캘리브레이션된 값입니다.
-            cv2.putText(image, f"Pitch: {pitch_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, color, 2)
+            # 캘리브레이션 상태에 따른 색상 사용
+            head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
+            cv2.putText(image, f"Pitch: {pitch_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
             text_y_offset += 30
         
         # ⭐ (선택 사항) Yaw 값도 상시 표시하려면 추가
         if 'mp_head_yaw_deg' in mp_display_results:
             yaw_val = mp_display_results['mp_head_yaw_deg']
-            cv2.putText(image, f"Yaw: {yaw_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, color, 2)
+            # 캘리브레이션 상태에 따른 색상 사용
+            head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
+            cv2.putText(image, f"Yaw: {yaw_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
             text_y_offset += 30
 
         # ⭐ (선택 사항) Roll 값도 상시 표시하려면 추가
         if 'mp_head_roll_deg' in mp_display_results:
             roll_val = mp_display_results['mp_head_roll_deg']
-            cv2.putText(image, f"Roll: {roll_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, color, 2)
+            # 캘리브레이션 상태에 따른 색상 사용
+            head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
+            cv2.putText(image, f"Roll: {roll_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
             text_y_offset += 30
-            
-        # 졸음 감지
-        if mp_display_results.get("is_drowsy"):
-            cv2.putText(image, "Drowsy!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-        text_y_offset += 30
-
-        # 하품 감지
-        if mp_display_results.get("is_yawning"):
-            cv2.putText(image, "Yawning!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-        text_y_offset += 30
-
-        # ⭐ 시선 이탈 감지 (gaze_x 기준)
-        if mp_display_results.get("is_gaze"):
-            cv2.putText(image, "look ahead", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)
+        
+        # 캘리브레이션된 경우에만 상태 메시지 표시
+        is_calibrated = mp_display_results.get("mp_is_calibrated", False)
+        if is_calibrated:
+            # 졸음 감지
+            if mp_display_results.get("is_drowsy"):
+                cv2.putText(image, "Drowsy!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
             text_y_offset += 30
 
-        # ⭐ 눈동자 기반 시선 감지 결과 표시
-        if mp_display_results.get("is_pupil_gaze_deviated"):
-            cv2.putText(image, "Pupil Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
-                       font, font_scale, warning_color, 2)
-            text_y_offset += 30
-        elif mp_display_results.get("enable_pupil_gaze_detection"):
-            # 눈동자 기반 시선 감지가 활성화되어 있지만 이탈하지 않은 경우
-            cv2.putText(image, "Pupil Gaze: OK", (text_x_offset, text_y_offset), 
-                       font, font_scale, color, 2)
+            # 하품 감지
+            if mp_display_results.get("is_yawning"):
+                cv2.putText(image, "Yawning!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
             text_y_offset += 30
 
-        # 보정된 시선 정보 표시 (새로 추가)
-        if 'compensated_gaze_x' in mp_display_results and 'compensated_gaze_y' in mp_display_results:
-            comp_gaze_x = mp_display_results['compensated_gaze_x']
-            comp_gaze_y = mp_display_results['compensated_gaze_y']
-            cv2.putText(image, f"Comp. Gaze: ({comp_gaze_x:.2f}, {comp_gaze_y:.2f})", 
-                       (text_x_offset, text_y_offset), font, font_scale, (255, 255, 0), 2)
-            text_y_offset += 30
-            
-            # 보정된 시선 이탈 감지 표시
-            if mp_display_results.get("is_gaze_compensated"):
-                cv2.putText(image, "Comp. Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
-                           font, font_scale, (0, 0, 255), 2)
+            # ⭐ 시선 이탈 감지 (gaze_x 기준)
+            if mp_display_results.get("is_gaze"):
+                cv2.putText(image, "look ahead", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)
+                text_y_offset += 30
+
+            # ⭐ 눈동자 기반 시선 감지 결과 표시
+            if mp_display_results.get("is_pupil_gaze_deviated"):
+                cv2.putText(image, "Pupil Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
+                           font, font_scale, warning_color, 2)
+                text_y_offset += 30
+            elif mp_display_results.get("enable_pupil_gaze_detection"):
+                # 눈동자 기반 시선 감지가 활성화되어 있지만 이탈하지 않은 경우
+                cv2.putText(image, "Pupil Gaze: OK", (text_x_offset, text_y_offset), 
+                           font, font_scale, color, 2)
+                text_y_offset += 30
+
+            # 보정된 시선 정보 표시 (새로 추가)
+            if 'compensated_gaze_x' in mp_display_results and 'compensated_gaze_y' in mp_display_results:
+                comp_gaze_x = mp_display_results['compensated_gaze_x']
+                comp_gaze_y = mp_display_results['compensated_gaze_y']
+                cv2.putText(image, f"Comp. Gaze: ({comp_gaze_x:.2f}, {comp_gaze_y:.2f})", 
+                           (text_x_offset, text_y_offset), font, font_scale, (255, 255, 0), 2)
                 text_y_offset += 30
                 
-        # Gaze 감지가 비활성화된 경우 표시
-        if mp_display_results.get("gaze_disabled_due_to_head_rotation"):
-            cv2.putText(image, "Gaze: DISABLED (Head Rotated)", (text_x_offset, text_y_offset), 
-                       font, font_scale, (128, 128, 128), 2)  # 회색으로 표시
-            text_y_offset += 30
+                # 보정된 시선 이탈 감지 표시
+                if mp_display_results.get("is_gaze_compensated"):
+                    cv2.putText(image, "Comp. Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
+                               font, font_scale, (0, 0, 255), 2)
+                    text_y_offset += 30
+                    
+            # Gaze 감지가 비활성화된 경우 표시
+            if mp_display_results.get("gaze_disabled_due_to_head_rotation"):
+                cv2.putText(image, "Gaze: DISABLED (Head Rotated)", (text_x_offset, text_y_offset), 
+                           font, font_scale, (128, 128, 128), 2)  # 회색으로 표시
+                text_y_offset += 30
 
-        # 전방 주시 이탈 (캘리브레이션된 경우)
-        if mp_display_results.get("is_distracted_from_front"):
-            cv2.putText(image, "Distracted from Front!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
-        
-        # ----------------------------------------------------
-        # 6. 새로운 손 감지 상태 표시 (MediaPipe 수정된 로직)
-        # ----------------------------------------------------
-        # 손 감지 상태에 따른 메시지와 색상 표시
-        hand_status = mp_display_results.get("hand_status", "No Hands Detected")
-        hand_warning_color = mp_display_results.get("hand_warning_color", "green")
-        hand_warning_message = mp_display_results.get("hand_warning_message", "")
-        
-        # 색상 매핑
-        color_map = {
-            "green": (0, 255, 0),    # 초록색
-            "yellow": (0, 255, 255), # 노란색 (BGR)
-            "red": (0, 0, 255)       # 빨간색
-        }
-        
-        # 손 상태 표시
-        if hand_warning_message:
-            display_color = color_map.get(hand_warning_color, (0, 255, 0))
-            cv2.putText(image, hand_warning_message, (text_x_offset, text_y_offset), 
-                       font, font_scale, display_color, 2)
-            text_y_offset += 30
-        
-        # 손 상태 정보 표시
-        status_color = color_map.get(hand_warning_color, (0, 255, 0))
-        cv2.putText(image, f"Hand Status: {hand_status}", (text_x_offset, text_y_offset), 
-                   font, font_scale, status_color, 2)
-        text_y_offset += 30
-        
-        # 기존 손 이탈 감지 표시 (호환성을 위해 유지)
-        if mp_display_results.get("is_left_hand_off"):
-            cv2.putText(image, "Left Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
-        if mp_display_results.get("is_right_hand_off"):
-            cv2.putText(image, "Right Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
-
-        # 얼굴 가림 감지
-        if mp_display_results.get("is_eye_occluded_danger"):
-            cv2.putText(image, "Eyes Occluded!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
-        elif mp_display_results.get("is_mouth_occluded_as_yawn"):
-            cv2.putText(image, "Mouth Occluded (Yawn?)", (text_x_offset, text_y_offset), font, font_scale, color, 2)
-            text_y_offset += 30
-        elif mp_display_results.get("is_face_occluded_by_hand"):
-            cv2.putText(image, "Face Occluded by Hand!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+            # 전방 주시 이탈 (캘리브레이션된 경우)
+            if mp_display_results.get("is_distracted_from_front"):
+                cv2.putText(image, "Distracted from Front!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                text_y_offset += 30
+            
+            # ----------------------------------------------------
+            # 6. 새로운 손 감지 상태 표시 (MediaPipe 수정된 로직)
+            # ----------------------------------------------------
+            # 손 감지 상태에 따른 메시지와 색상 표시
+            hand_status = mp_display_results.get("hand_status", "No Hands Detected")
+            hand_warning_color = mp_display_results.get("hand_warning_color", "green")
+            hand_warning_message = mp_display_results.get("hand_warning_message", "")
+            
+            # 색상 매핑
+            color_map = {
+                "green": (0, 255, 0),    # 초록색
+                "yellow": (0, 255, 255), # 노란색 (BGR)
+                "red": (0, 0, 255)       # 빨간색
+            }
+            
+            # 손 상태 표시
+            if hand_warning_message:
+                display_color = color_map.get(hand_warning_color, (0, 255, 0))
+                cv2.putText(image, hand_warning_message, (text_x_offset, text_y_offset), 
+                           font, font_scale, display_color, 2)
+                text_y_offset += 30
+            
+            # 손 상태 정보 표시
+            status_color = color_map.get(hand_warning_color, (0, 255, 0))
+            cv2.putText(image, f"Hand Status: {hand_status}", (text_x_offset, text_y_offset), 
+                       font, font_scale, status_color, 2)
             text_y_offset += 30
             
-        # 기타 유용한 정보 표시 (선택 사항)
-        # cv2.putText(image, f"EAR: {mp_display_results['mp_ear']:.2f}", (w - 150, 30), font, 0.7, (255, 255, 0), 1)
-        # cv2.putText(image, f"MAR: {mp_display_results['mp_mar']:.2f}", (w - 150, 60), font, 0.7, (255, 255, 0), 1)
-        
-        if mp_display_results.get("is_head_down"):
-            cv2.putText(image, "Head Down!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
+            # 기존 손 이탈 감지 표시 (호환성을 위해 유지)
+            if mp_display_results.get("is_left_hand_off"):
+                cv2.putText(image, "Left Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                text_y_offset += 30
+            if mp_display_results.get("is_right_hand_off"):
+                cv2.putText(image, "Right Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                text_y_offset += 30
+
+            # 얼굴 가림 감지
+            if mp_display_results.get("is_eye_occluded_danger"):
+                cv2.putText(image, "Eyes Occluded!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                text_y_offset += 30
+            elif mp_display_results.get("is_mouth_occluded_as_yawn"):
+                cv2.putText(image, "Mouth Occluded (Yawn?)", (text_x_offset, text_y_offset), font, font_scale, color, 2)
+                text_y_offset += 30
+            elif mp_display_results.get("is_face_occluded_by_hand"):
+                cv2.putText(image, "Face Occluded by Hand!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                text_y_offset += 30
+                
+            # 기타 유용한 정보 표시 (선택 사항)
+            # cv2.putText(image, f"EAR: {mp_display_results['mp_ear']:.2f}", (w - 150, 30), font, 0.7, (255, 255, 0), 1)
+            # cv2.putText(image, f"MAR: {mp_display_results['mp_mar']:.2f}", (w - 150, 60), font, 0.7, (255, 255, 0), 1)
+            
+            if mp_display_results.get("is_head_down"):
+                cv2.putText(image, "Head Down!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                text_y_offset += 30
         
         return image
 
