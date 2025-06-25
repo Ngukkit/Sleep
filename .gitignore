@@ -157,7 +157,6 @@ runs/
 
 # Data files
 *.csv
-*.json
 *.xml
 *.txt
 *.dat
