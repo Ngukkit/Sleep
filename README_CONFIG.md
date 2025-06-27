@@ -69,6 +69,45 @@ config.json
 }
 ```
 
+### OpenVINO 설정
+```json
+{
+  "openvino": {
+    "ear_threshold": 0.2,            // EAR 임계값 (눈 감음 판정)
+    "mar_thresh_open": 0.4,          // MAR 임계값 (입 열림 판정)
+    "mar_thresh_yawn": 0.5,          // MAR 임계값 (하품 판정)
+    "eye_closed_consec_frames": 15,  // 눈 감음 연속 프레임 수
+    "pitch_down_threshold": 10.0,    // 고개 숙임 임계값 (도)
+    "head_down_consec_frames": 15,   // 고개 숙임 연속 프레임 수
+    "yaw_threshold": 25.0,           // 고개 좌우 회전 임계값 (도)
+    "roll_threshold": 25.0,          // 고개 기울기 임계값 (도)
+    "distraction_consec_frames": 20, // 주의 이탈 연속 프레임 수
+    "mouth_ar_consec_frames": 30,    // 입 벌림 연속 프레임 수
+    "head_pose_threshold": 12.0,     // 고개 자세 임계값 (도)
+    "frame_skip": 3,                 // 프레임 스킵 수
+    "face_detection_cache_time": 0.15, // 얼굴 감지 캐시 시간 (초)
+    "target_fps": 20.0,              // 목표 FPS
+    "max_frame_skip": 2,             // 최대 프레임 스킵 수
+    "calibration_ear_ratio": 0.8,    // 캘리브레이션 EAR 비율
+    "use_hybrid_mode": true,         // 하이브리드 모드 사용 여부
+    "device": "CPU",                 // 실행 디바이스 (CPU/GPU)
+    "conf_thres": 0.5,               // 얼굴 감지 신뢰도 임계값
+    "face_bbox_scale": 1.3,          // 얼굴 바운딩 박스 확장 비율
+    "head_down_threshold": 0.11,     // 입-턱 거리 기반 고개 숙임 임계값
+    "head_up_threshold": 0.22,       // 입-턱 거리 기반 고개 들기 임계값
+    "eye_open_frame_threshold": 5,   // 눈 열림 확인 프레임 수
+    "jump_thresh": 6.0,              // 눈동자 움직임 jump 임계값
+    "var_thresh": 4.0,               // 눈동자 움직임 variance 임계값
+    "mouth_jump_thresh": 6.0,        // 입 움직임 jump 임계값
+    "mouth_var_thresh": 4.0,         // 입 움직임 variance 임계값
+    "gaze_threshold": 1.2,           // 시선 감지 임계값
+    "head_rotation_threshold_for_gaze": 30.0,  // 시선 감지 비활성화 고개 회전 임계값 (도)
+    "enable_pupil_gaze_detection": true,       // 눈동자 시선 감지 활성화 여부
+    "look_ahead_consec_frames": 10   // 정면 응시 연속 프레임 수
+  }
+}
+```
+
 ### 3DDFA 설정
 ```json
 {
@@ -185,6 +224,77 @@ MediaPipe의 blendshape 기반 gaze 대신 눈동자 위치를 직접 추적하�
 - blendshape 기반보다 더 물리적이고 정확한 시선 감지
 - 고개 회전과 무관하게 눈동자 위치만으로 시선 이탈 판단
 - 사용자의 고유한 시선 특성 반영 가능
+
+### OpenVINO 하이브리드 시선 감지
+OpenVINO는 5점 랜드마크(눈동자 정확 위치)와 35점 랜드마크(눈 크기 정보)를 조합하여 정밀한 시선 방향을 감지합니다:
+- **활성화**: `enable_pupil_gaze_detection: true`
+- **시선 임계값**: `gaze_threshold: 1.2` (시선 이탈 판정 기준)
+- **고개 회전 임계값**: `head_rotation_threshold_for_gaze: 30.0` (30도 이상 회전 시 시선 감지 비활성화)
+- **정면 응시 프레임**: `look_ahead_consec_frames: 10` (10프레임 연속 정면 응시 시 정상 판정)
+- **비활성화**: `enable_pupil_gaze_detection: false`
+
+**작동 원리**:
+1. **5점 모델**: 정확한 눈동자 위치 추출
+2. **35점 모델**: 눈의 크기와 구조 정보 제공
+3. **캘리브레이션**: 정면 응시 시점의 눈동자 위치와 눈 크기 저장
+4. **상대적 계산**: 현재 상태와 캘리브레이션 상태의 상대적 차이 계산
+5. **시선 판정**: gaze_magnitude가 임계값을 초과하면 시선 이탈로 판정
+
+**시선 상태 분류**:
+- **"Look A head"**: 정면 응시 (gaze_magnitude ≤ 1.2)
+- **"Look Away"**: 시선 이탈 (gaze_magnitude > 1.2)
+- **"Gaze: OFF"**: 고개 회전이 너무 클 때 (YAW > 30도)
+
+### OpenVINO 눈 감음 감지 (Jump/Var 기반)
+OpenVINO는 기존의 EAR 대신 눈동자 움직임의 jump(최대-최소)와 variance(분산)를 분석하여 눈 감음을 감지합니다:
+- **Jump 임계값**: `jump_thresh: 6.0` (눈동자 움직임 범위 임계값)
+- **Variance 임계값**: `var_thresh: 4.0` (눈동자 움직임 분산 임계값)
+- **연속 프레임**: `eye_closed_consec_frames: 15` (15프레임 연속 감지 시 눈 감음 판정)
+- **눈 열림 확인**: `eye_open_frame_threshold: 5` (5프레임 연속 정상 시 눈 열림 판정)
+
+**작동 원리**:
+1. **히스토리 관리**: 최근 10프레임의 눈동자 위치 저장
+2. **Jump 계산**: 최대값 - 최소값으로 움직임 범위 측정
+3. **Variance 계산**: 분산으로 움직임의 불규칙성 측정
+4. **입 움직임 비교**: 입도 같이 움직이면 고개 움직임으로 판단
+5. **동기화 감지**: 양쪽 눈이 같은 방향으로 움직이면 시선 이동으로 판단
+
+**장점**:
+- EAR보다 더 안정적인 눈 감음 감지
+- 고개 움직임과 시선 이동을 구분하여 오탐 감소
+- 개인별 눈 크기 차이에 영향받지 않음
+
+### OpenVINO 입-턱 거리 기반 고개 자세 감지
+OpenVINO는 기존의 각도 기반 대신 입과 턱 사이의 거리를 측정하여 고개 숙임/들기를 감지합니다:
+- **고개 숙임 임계값**: `head_down_threshold: 0.11` (입-턱 거리가 얼굴 대각선의 11% 이하)
+- **고개 들기 임계값**: `head_up_threshold: 0.22` (입-턱 거리가 얼굴 대각선의 22% 이상)
+- **연속 프레임**: `head_down_consec_frames: 15` (15프레임 연속 감지 시 고개 숙임 판정)
+
+**작동 원리**:
+1. **35점 랜드마크**: 입 오른쪽 점(11번)과 턱점(26번) 위치 추출
+2. **거리 계산**: 두 점 사이의 유클리드 거리 계산
+3. **정규화**: 얼굴 대각선 길이로 나누어 정규화
+4. **임계값 비교**: 정규화된 거리가 임계값과 비교하여 고개 자세 판정
+
+**장점**:
+- 각도 기반보다 더 직관적이고 정확한 고개 자세 감지
+- 얼굴 크기에 관계없이 일관된 판정
+- 고개 회전과 무관하게 상하 움직임만 감지
+
+### OpenVINO 성능 최적화 설정
+OpenVINO의 성능을 최적화하기 위한 설정들:
+- **목표 FPS**: `target_fps: 20.0` (초당 20프레임 목표)
+- **프레임 스킵**: `frame_skip: 3` (3프레임마다 1프레임 처리)
+- **최대 스킵**: `max_frame_skip: 2` (최대 2프레임 연속 스킵)
+- **캐시 시간**: `face_detection_cache_time: 0.15` (얼굴 감지 결과 0.15초간 캐시)
+- **디바이스**: `device: "CPU"` (CPU 또는 GPU 선택)
+- **바운딩 박스 확장**: `face_bbox_scale: 1.3` (얼굴 영역을 1.3배 확장)
+
+**성능 조정 팁**:
+- **더 빠른 처리**: `target_fps` 높이기, `frame_skip` 증가
+- **더 정확한 감지**: `target_fps` 낮추기, `frame_skip` 감소
+- **메모리 절약**: `face_bbox_scale` 낮추기
+- **GPU 가속**: `device: "GPU"` (GPU 사용 가능한 경우)
 
 ## ⚠️ 주의사항
 
