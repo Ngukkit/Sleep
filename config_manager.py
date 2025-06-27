@@ -56,7 +56,7 @@ class ConfigManager:
                 "mp_pitch_threshold": 10.0,
                 "mp_roll_threshold": 999.0,
                 "gaze_threshold": 0.5,
-                "distraction_consec_frames": 10,
+                "distraction_consec_frames": 15,
                 "true_pitch_threshold": 10.0,
                 "head_rotation_threshold_for_gaze": 15.0,
                 "use_video_mode": True,

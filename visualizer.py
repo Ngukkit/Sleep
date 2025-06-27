@@ -395,14 +395,29 @@ class Visualizer:
             elif mp_display_results.get("is_face_occluded_by_hand"):
                 cv2.putText(image, "Face Occluded by Hand!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
                 text_y_offset += 30
-                
-            # 기타 유용한 정보 표시 (선택 사항)
-            # cv2.putText(image, f"EAR: {mp_display_results['mp_ear']:.2f}", (w - 150, 30), font, 0.7, (255, 255, 0), 1)
-            # cv2.putText(image, f"MAR: {mp_display_results['mp_mar']:.2f}", (w - 150, 60), font, 0.7, (255, 255, 0), 1)
             
             if mp_display_results.get("is_head_down"):
                 cv2.putText(image, "Head Down!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
                 text_y_offset += 30
+        
+        # ⭐ Wait 제스처 감지 표시 (캘리브레이션 여부와 관계없이 항상 표시)
+        if mp_display_results.get("is_wait_gesture"):
+            wait_message = mp_display_results.get("wait_gesture_message", "Wait Calibrating")
+            wait_confidence = mp_display_results.get("wait_gesture_confidence", 0.0)
+            wait_color = mp_display_results.get("wait_gesture_color", (0, 255, 255))  # Yellow
+            
+            # 큰 폰트로 Wait Calibrating 표시
+            cv2.putText(image, wait_message, (text_x_offset, text_y_offset),
+            font, font_scale + 0.3, wait_color, 3)
+            text_y_offset += 40
+            
+            # 신뢰도 표시
+            cv2.putText(image, f"Wait Confidence: {wait_confidence:.2f}",
+            (text_x_offset, text_y_offset), font, font_scale, wait_color, 2)
+            
+            # 캘리브레이션 트리거 메시지 표시
+            cv2.putText(image, "Pupil Recalibration Triggered!",
+            (text_x_offset, text_y_offset), font, font_scale, (0, 255, 0), 2)  # Green
         
         return image
 
