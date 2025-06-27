@@ -53,7 +53,7 @@ class YOLOv5Detector:
         # Scale back boxes to original image size
         if det and len(det[0]): # Check if any detections for the batch (assuming batch size 1)
             det[0][:, :4] = scale_coords(img.shape[2:], det[0][:, :4], img_orig.shape).round()
-            
+
             # Select the largest face (largest bounding box area)
             if len(det[0]) > 1:
                 # Calculate areas of all detections

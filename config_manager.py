@@ -78,6 +78,30 @@ class ConfigManager:
             "general": {
                 "fps_display": True,
                 "debug_mode": False
+            },
+            "openvino": {
+                "ear_threshold": 0.2,
+                "mar_threshold": 0.4,
+                "eye_ar_consec_frames": 20,
+                "mouth_ar_consec_frames": 40,
+                "head_pose_threshold": 12.0,
+                "head_down_consec_frames": 8,
+                "distraction_consec_frames": 15,
+                "distraction_yaw_threshold": 30.0,
+                "distraction_roll_threshold": 45.0,
+                "frame_skip": 3,
+                "face_detection_cache_time": 0.15,
+                "target_fps": 20.0,
+                "max_frame_skip": 2,
+                "ear_history_length": 30,
+                "mar_history_length": 30,
+                "head_pose_history_length": 30,
+                "ear_variance_threshold": 0.001,
+                "mar_variance_threshold": 0.01,
+                "calibration_ear_ratio": 0.8,
+                "use_hybrid_mode": True,
+                "device": "CPU",
+                "conf_thres": 0.5
             }
         }
     
@@ -143,4 +167,8 @@ def get_yolo_config(key: str, default: Any = None) -> Any:
 
 def get_general_config(key: str, default: Any = None) -> Any:
     """Get general configuration value"""
-    return config_manager.get("general", key, default) 
+    return config_manager.get("general", key, default)
+
+def get_openvino_config(key: str, default: Any = None) -> Any:
+    """Get OpenVINO configuration value"""
+    return config_manager.get("openvino", key, default) 

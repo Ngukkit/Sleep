@@ -469,9 +469,9 @@ class MediaPipeAnalyzer:
                         results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
                         # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
                     else:
-                        results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
-                        # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
-                
+                            results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
+                            # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
+                    
                 # Gaze 계산 (간단한 방식)
                 # 눈동자 위치를 기반으로 gaze 계산
                 left_eye_center = np.array([
@@ -533,14 +533,14 @@ class MediaPipeAnalyzer:
         
         try:
             # Euler 각도 계산
-            pitch_val = np.arctan2(-rotation_matrix[2, 0], np.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2)) * 180 / np.pi
-            yaw_val = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0]) * 180 / np.pi
-            roll_val = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2]) * 180 / np.pi
+            yaw_val = np.arctan2(-rotation_matrix[2, 0], np.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2)) * 180 / np.pi * 2
+            roll_val = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0]) * 180 / np.pi * 2
+            pitch_val = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2]) * 180 / np.pi * 2
             
             # 사용자 피드백 기반으로 yaw와 pitch를 스왑
             # 고개 숙이기(pitch)가 좌우 회전(yaw)으로, 좌우 회전이 고개 숙이기로 계산되는 문제 수정
-            pitch = yaw_val
-            yaw = pitch_val
+            pitch = pitch_val
+            yaw = yaw_val
             roll = roll_val
             
             # Roll 각도를 -180~180도 범위로 정규화
@@ -847,11 +847,11 @@ class MediaPipeAnalyzer:
                         results["is_distracted_from_front"] = True
                         results["mp_is_distracted_from_front"] = True
                         results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
-                        # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
+                            # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
                     else:
                         results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
                         # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
-                
+                    
                 # Pitch는 즉시 감지 (기존 로직 유지)
                 if abs(current_pitch) > MP_PITCH_THRESHOLD:
                     results["is_head_down"] = True

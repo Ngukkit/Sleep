@@ -4,11 +4,14 @@ import sys
 import os
 from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QCheckBox, QLabel, QLineEdit, QFileDialog, QMessageBox, QFrame, QComboBox)
-from PyQt5.QtGui import QPixmap, QImage, QDragEnterEvent, QDropEvent
+                             QPushButton, QCheckBox, QLabel, QLineEdit, QFileDialog, QMessageBox, QFrame, QComboBox, QGroupBox)
+from PyQt5.QtGui import QPixmap, QImage, QDragEnterEvent, QDropEvent, QMouseEvent, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 import numpy as np
 from scipy.spatial import distance as dist
+import json
+from PIL import Image, ImageTk
+from config_manager import ConfigManager, get_mediapipe_config, get_openvino_config
 
 import visualizer
 import cv2
@@ -26,12 +29,15 @@ if str(ROOT) not in sys.path:
 import yolov5_detector # 'detect' 대신 'yolov5_detector'를 직접 임포트
 import dlib_analyzer # Ensure dlib_analyzer.py is in the same directory or accessible
 import mediapipe_analyzer # Ensure mediapipe_analyzer.py is in the same directory or accessible
+import openvino_analyzer # OpenVINO 분석기 임포트
 
 from mediapipe.tasks.python import vision
 import mediapipe as mp
+from mediapipe import Image as mp_Image
 
 from detector_utils import calculate_ear, calculate_mar
 
+GUI_STATE_FILE = "gui_state.json"
 
 class DragDropLineEdit(QLineEdit):
     """Custom QLineEdit that accepts drag and drop for video and image files"""
@@ -116,12 +122,16 @@ class VideoThread(QThread):
         self.yolo_detector = None
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
+        self.openvino_analyzer = None
+        self.openvino_hybrid_analyzer = None  # OpenVINO 하이브리드 분석기 추가
 
         # Front Face Calibration related variables
         self._dlib_calibration_trigger = False
         self._mediapipe_calibration_trigger = False
+        self._openvino_calibration_trigger = False  # Add OpenVINO calibration trigger
         self._set_dlib_front_face_mode = False
         self._set_mediapipe_front_face_mode = False
+        self._set_openvino_front_face_mode = False
 
         # Live Stream 모드용 결과 저장 변수
         self.latest_face_result = None
@@ -141,6 +151,15 @@ class VideoThread(QThread):
         self.is_image_sequence = len(self.image_files) > 0
         # FPS timing
         self.prev_frame_time = None
+        
+        # --- FPS 제한을 위한 타이밍 제어 ---
+        self.target_fps = 20.0
+        self.frame_interval = 1.0 / self.target_fps
+        self.last_frame_time = 0
+        
+        # --- 강력한 FPS 제한을 위한 추가 변수 ---
+        self.frame_skip_counter = 0
+        self.max_frame_skip = 3  # 최대 3프레임 스킵
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -159,6 +178,15 @@ class VideoThread(QThread):
     @mediapipe_calibration_trigger.setter
     def mediapipe_calibration_trigger(self, value):
         self._mediapipe_calibration_trigger = value
+
+    # OpenVINO 캘리브레이션 트리거 getter/setter
+    @property
+    def openvino_calibration_trigger(self):
+        return self._openvino_calibration_trigger
+
+    @openvino_calibration_trigger.setter
+    def openvino_calibration_trigger(self, value):
+        self._openvino_calibration_trigger = value
     
     # Dlib Set Front Face Mode getter/setter
     @property
@@ -178,11 +206,19 @@ class VideoThread(QThread):
     def set_mediapipe_front_face_mode(self, value):
         self._set_mediapipe_front_face_mode = value
 
+    # OpenVINO Set Front Face Mode getter/setter
+    @property
+    def set_openvino_front_face_mode(self):
+        return self._set_openvino_front_face_mode
 
-    def on_face_result(self, result: vision.FaceLandmarkerResult, image: mp.Image, timestamp_ms: int):
+    @set_openvino_front_face_mode.setter
+    def set_openvino_front_face_mode(self, value):
+        self._set_openvino_front_face_mode = value
+
+    def on_face_result(self, result: 'vision.FaceLandmarkerResult', image: 'mp_Image', timestamp_ms: int):
         self.latest_face_result = result
 
-    def on_hand_result(self, result: vision.HandLandmarkerResult, image: mp.Image, timestamp_ms: int):
+    def on_hand_result(self, result: 'vision.HandLandmarkerResult', image: 'mp_Image', timestamp_ms: int):
         self.latest_hand_result = result
 
     def run(self):
@@ -199,7 +235,9 @@ class VideoThread(QThread):
         enable_dlib = self.config_args.get('enable_dlib', False)
         enable_yolo = self.config_args.get('enable_yolo', True)
         enable_mediapipe = self.config_args.get('enable_mediapipe', False)
-        mediapipe_mode_str = self.config_args.get('mediapipe_mode', 'Video (File)')
+        enable_openvino = self.config_args.get('enable_openvino', False)
+        enable_openvino_hybrid = self.config_args.get('enable_openvino_hybrid', False)  # 하이브리드 모드 추가
+        # mediapipe_mode_str = self.config_args.get('mediapipe_mode', 'Video (File)')
         
         # 모듈 초기화
         if enable_yolo:
@@ -218,11 +256,19 @@ class VideoThread(QThread):
             else:
                 self.dlib_analyzer = dlib_analyzer.DlibAnalyzer(dlib_predictor_path)
 
+        if enable_openvino:
+            try:
+                # print("[VideoThread] Initializing OpenVINO Analyzer...")
+                self.openvino_analyzer = openvino_analyzer.OpenVINOAnalyzer()
+            except Exception as e:
+                print(f"Error initializing OpenVINO Analyzer: {e}")
+                self.openvino_analyzer = None
+                enable_openvino = False # Disable if initialization fails
+
         if enable_mediapipe:
             # print(f"[VideoThread] Initializing MediaPipe Analyzer...")
             
             # config.json에서 MediaPipe 모드 설정 읽기
-            from config_manager import get_mediapipe_config
             use_video_mode = get_mediapipe_config("use_video_mode", True)
             
             running_mode = (
@@ -261,6 +307,14 @@ class VideoThread(QThread):
 
             prev_frame_time = 0
             while self.is_running and cap.isOpened():
+                # --- FPS 제한 로직 ---
+                current_time = time.time()
+                if current_time - self.last_frame_time < self.frame_interval:
+                    time.sleep(0.001)  # 1ms 대기
+                    continue
+                
+                self.last_frame_time = current_time
+                
                 ret, frame = cap.read()
                 if not ret:
                     print("End of stream or cannot read frame.")
@@ -269,9 +323,9 @@ class VideoThread(QThread):
                 im0 = frame.copy()
                 frame_h, frame_w, _ = im0.shape # 현재 프레임의 크기
 
-                # Process frame with all analyzers
+                    # Process frame with all analyzers
                 self.process_frame(im0, frame_h, frame_w, enable_yolo, enable_dlib, enable_mediapipe, 
-                                 conf_thres, iou_thres, max_det, hide_labels, hide_conf)
+                                    enable_openvino, conf_thres, iou_thres, max_det, hide_labels, hide_conf)
 
             cap.release()
             # print("[VideoThread] Video capture released.")
@@ -298,6 +352,7 @@ class VideoThread(QThread):
                              self.config_args.get('enable_yolo', True),
                              self.config_args.get('enable_dlib', False),
                              self.config_args.get('enable_mediapipe', False),
+                             self.config_args.get('enable_openvino', False),
                              self.config_args.get('conf_thres', 0.25),
                              self.config_args.get('iou_thres', 0.45),
                              self.config_args.get('max_det', 10),
@@ -309,10 +364,10 @@ class VideoThread(QThread):
             self.current_image_index += 1
 
     def process_frame(self, im0, frame_h, frame_w, enable_yolo, enable_dlib, enable_mediapipe, 
-                     conf_thres, iou_thres, max_det, hide_labels, hide_conf):
+                     enable_openvino, conf_thres, iou_thres, max_det, hide_labels, hide_conf):
         """Process a single frame with all enabled analyzers"""
-        
-        # --- 1. YOLOv5 Detection ---
+
+            # --- 1. YOLOv5 Detection ---
         yolo_dets = torch.tensor([])
         if enable_yolo and self.yolo_detector:
             yolo_dets, _, _ = self.yolo_detector.detect(
@@ -332,15 +387,40 @@ class VideoThread(QThread):
                         (frame_h, frame_w), np.array(dlib_results["landmark_points"])
                     )
                     if calibrated_successfully:
-                        # print("[VideoThread] Dlib front pose calibrated successfully.")
-                        pass
-                    else:
-                        # print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
-                        pass
+                    # print("[VideoThread] Dlib front pose calibrated successfully.")
+                      pass
                 else:
-                    # print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                    # print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
                     pass
+            else:
+                # print("[VideoThread] Dlib front pose calibration failed (no face detected).")
+                pass
                 self.dlib_calibration_trigger = False # 캘리브레이션 요청 초기화
+        
+        # --- 3. OpenVINO Analysis ---
+        openvino_results = {}
+        if enable_openvino and self.openvino_analyzer:
+            openvino_results = self.openvino_analyzer.analyze_frame(im0.copy())
+            
+            # --- OpenVINO 정면 캘리브레이션 트리거 처리 ---
+            if hasattr(self, 'openvino_calibration_trigger') and self.openvino_calibration_trigger:
+                if openvino_results.get("faces") and len(openvino_results["faces"]) > 0:
+                    face = openvino_results["faces"][0]
+                    if face.get("landmarks_35") and len(face["landmarks_35"]) >= 35:
+                        calibrated_successfully = self.openvino_analyzer.calibrate_front_pose(
+                            (frame_h, frame_w),
+                            landmarks_5=face.get("landmarks_5"),
+                            landmarks_35=face.get("landmarks_35")
+                        )
+                        if calibrated_successfully:
+                            print("[VideoThread] OpenVINO front pose calibrated successfully.")
+                        else:
+                            print("[VideoThread] OpenVINO front pose calibration failed.")
+                    else:
+                        print("[VideoThread] OpenVINO front pose calibration failed (insufficient landmarks_35).")
+                else:
+                    print("[VideoThread] OpenVINO front pose calibration failed (no face detected).")
+                self.openvino_calibration_trigger = False  # 캘리브레이션 요청 초기화
         
         # --- 3. MediaPipe Analysis ---
         mediapipe_results = {}
@@ -371,16 +451,21 @@ class VideoThread(QThread):
                     print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
                 self.mediapipe_calibration_trigger = False # 캘리브레이션 요청 초기화
 
-        # --- 4. Visualization ---
+            # --- 4. Visualization ---
         if enable_yolo and self.yolo_detector:
             im0 = self.visualizer_instance.draw_yolov5_results(im0, yolo_dets, self.yolo_detector.names, hide_labels, hide_conf)
-        
+
         if enable_dlib and self.dlib_analyzer:
             im0 = self.visualizer_instance.draw_dlib_results(im0, dlib_results)
             # Add front face status display
             is_calibrated_dlib = dlib_results.get("is_calibrated", False)
             is_distracted_dlib = dlib_results.get("is_distracted_from_front", False)
             im0 = self.visualizer_instance.draw_dlib_front_status(im0, is_calibrated_dlib, is_distracted_dlib)
+
+        if enable_openvino and self.openvino_analyzer:
+            im0 = self.visualizer_instance.draw_i009_landmarks(im0, openvino_results)
+            # OpenVINO 상태 정보를 화면 아래 중앙에 표시 (dlib 스타일)
+            im0 = self.visualizer_instance.draw_openvino_status(im0, openvino_results)
         
         if enable_mediapipe and self.mediapipe_analyzer:
             im0 = self.visualizer_instance.draw_mediapipe_results(im0, mediapipe_results)
@@ -408,9 +493,9 @@ class VideoThread(QThread):
             self.analyze_driver_status_mediapipe(mediapipe_results)
 
         # --- 6. Socket Communication ---
-        # YOLO 결과를 사람이 읽을 수 있는 dict 리스트로 변환
+            # YOLO 결과를 사람이 읽을 수 있는 dict 리스트로 변환
         yolo_results = []
-        if yolo_dets is not None and len(yolo_dets):
+        if enable_yolo and self.yolo_detector and yolo_dets is not None and len(yolo_dets):
             for det in yolo_dets.tolist():
                 *xyxy, conf, cls = det
                 cls_idx = int(cls)
@@ -419,17 +504,18 @@ class VideoThread(QThread):
                 yolo_results.append({
                     'bbox': xyxy,
                     'conf': conf,
-                    'class_id': cls_idx,
-                    'class_name': class_name
+                'class_id': cls_idx,
+                'class_name': class_name
                 })
 
         result_to_send = {
             'yolo': yolo_results,
             'dlib': dlib_results,
             'mediapipe': mediapipe_results,
+            'openvino': openvino_results,
             'status': self.driver_status
         }
-        # print(f"result_to_send: {result_to_send}")
+            # print(f"result_to_send: {result_to_send}")
         # Only send if enabled
         if self.config_args.get('enable_socket_sending', True):
             socket_sender.send_result_via_socket(result_to_send, self.config_args['socket_ip'], self.config_args['socket_port'])
@@ -441,9 +527,9 @@ class VideoThread(QThread):
         fps = 1/(new_frame_time - self.prev_frame_time) if (new_frame_time - self.prev_frame_time) > 0 else 0
         self.prev_frame_time = new_frame_time
         im0 = self.visualizer_instance.draw_fps(im0, fps)
-
+            
         self.change_pixmap_signal.emit(im0)
-        # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
+            # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
 
     def stop(self):
         self.is_running = False
@@ -470,13 +556,28 @@ class MainApp(QWidget):
         self.video_thread = None
         self.is_set_dlib_front_face_mode = False 
         self.is_set_mediapipe_front_face_mode = False # MediaPipe 정면 설정 모드 상태
+        self.is_set_openvino_front_face_mode = False
         self.dlib_analyzer = None
         self.mediapipe_analyzer = None
+        self.openvino_analyzer = None
+        self.openvino_hybrid_analyzer = None  # OpenVINO 하이브리드 분석기 추가
         # 소켓 전송용 IP/Port
         self.socket_ip = "127.0.0.1"
         self.socket_port = 5001
 
-        self.init_ui()
+        self.gui_state = self._load_gui_state()
+        self.config_manager = ConfigManager()
+        
+        self.init_ui() # init_ui()를 먼저 호출하여 위젯을 생성합니다.
+
+        self.thread = None
+        self.is_running = False
+        
+        # 아이콘 설정 (실행 파일에서도 동작하도록)
+        try:
+            self.setWindowIcon(QIcon(ROOT / 'icons' / 'icon.png'))
+        except Exception as e:
+            print(f"Error setting window icon: {e}")
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -485,7 +586,7 @@ class MainApp(QWidget):
 
         self.image_label = QLabel(self)
         self.image_label.setFixedSize(800, 600)
-        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("background-color: black; border: 1px solid gray;")
         self.image_label.setScaledContents(True)
         video_layout.addWidget(self.image_label)
@@ -504,14 +605,18 @@ class MainApp(QWidget):
         self.btn_next_image.setEnabled(False)
 
         self.chk_yolo = QCheckBox("Enable YOLOv5")
-        self.chk_yolo.setChecked(True)
+        self.chk_yolo.setChecked(self.gui_state.get("enable_yolo", False))
 
         self.chk_dlib = QCheckBox("Enable Dlib")
-        self.chk_dlib.setChecked(False)
+        self.chk_dlib.setChecked(self.gui_state.get("enable_dlib", False))
         self.chk_dlib.stateChanged.connect(self.update_front_face_checkbox_states)
         self.chk_mediapipe = QCheckBox("Enable MediaPipe")
-        self.chk_mediapipe.setChecked(False)
+        self.chk_mediapipe.setChecked(self.gui_state.get("enable_mediapipe", False))
         self.chk_mediapipe.stateChanged.connect(self.update_front_face_checkbox_states)
+
+        self.chk_openvino = QCheckBox("Enable OpenVINO")
+        self.chk_openvino.setChecked(self.gui_state.get("enable_openvino", False))
+        self.chk_openvino.stateChanged.connect(self.update_front_face_checkbox_states)
 
         # 통합 캘리브레이션 버튼으로 변경
         self.btn_calibrate = QPushButton("Calibrate Front Face")
@@ -540,19 +645,20 @@ class MainApp(QWidget):
         
         # --- Add socket send enable checkbox ---
         self.chk_send_socket = QCheckBox("Send Data to Server")
-        self.chk_send_socket.setChecked(False)
+        self.chk_send_socket.setChecked(self.gui_state.get("enable_socket_sending", False))
         socket_layout.addWidget(self.chk_send_socket)
 
         self.update_front_face_checkbox_states() # 초기 상태 설정
 
         self.label_source = QLabel("Video Source (0 for webcam):")
         self.txt_source = DragDropLineEdit()
-        self.txt_source.setText("0")
+        self.txt_source.setText(self.gui_state.get("source", "0"))
         self.btn_browse_source = QPushButton("Browse")
         self.btn_browse_source.clicked.connect(self.browse_video_source)
 
         self.label_weights = QLabel("YOLOv5 Weights:")
         self.txt_weights = QLineEdit(str(ROOT / 'weights' / 'best.pt'))
+        self.txt_weights.setText(self.gui_state.get("weights", str(ROOT / 'weights' / 'best.pt')))
         self.btn_browse_weights = QPushButton("Browse")
         self.btn_browse_weights.clicked.connect(self.browse_weights)
 
@@ -563,11 +669,12 @@ class MainApp(QWidget):
         separator = QFrame()
         separator.setFrameShape(QFrame.VLine)
         separator.setFrameShadow(QFrame.Sunken)
-        control_layout.addWidget(separator)
+        control_layout.addWidget(separator) 
 
         control_layout.addWidget(self.chk_yolo)
         control_layout.addWidget(self.chk_dlib)
         control_layout.addWidget(self.chk_mediapipe)
+        control_layout.addWidget(self.chk_openvino)
         control_layout.addWidget(self.btn_calibrate)
         control_layout.addWidget(self.btn_config)
         control_layout.addWidget(self.btn_reload_config)
@@ -608,111 +715,59 @@ class MainApp(QWidget):
 
     def update_front_face_checkbox_states(self):
         """캘리브레이션 버튼 활성화 상태 업데이트"""
-        # dlib 또는 mediapipe 중 하나라도 활성화되어 있으면 캘리브레이션 버튼 활성화
-        self.btn_calibrate.setEnabled(self.chk_dlib.isChecked() or self.chk_mediapipe.isChecked())
+        # dlib, mediapipe, 또는 openvino 중 하나라도 활성화되어 있으면 캘리브레이션 버튼 활성화
+        self.btn_calibrate.setEnabled(
+            self.chk_dlib.isChecked() or 
+            self.chk_mediapipe.isChecked() or 
+            self.chk_openvino.isChecked()
+        )
         
         # 캘리브레이션 모드가 활성화되어 있는데 해당 분석기가 비활성화되면 캘리브레이션 모드도 해제
         if self.is_calibration_mode:
-            if not self.chk_dlib.isChecked() and not self.chk_mediapipe.isChecked():
+            if not (self.chk_dlib.isChecked() or 
+                   self.chk_mediapipe.isChecked() or 
+                   self.chk_openvino.isChecked()):
                 self.toggle_calibration_mode()  # 캘리브레이션 모드 해제
 
     def start_detection(self):
-        if self.video_thread and self.video_thread.isRunning():
-            QMessageBox.warning(self, "Warning", "Detection is already running.")
+        if self.thread is not None and self.thread.isRunning():
             return
 
-        # Dlib 정면 설정 모드가 켜져 있는데 Dlib이 비활성화된 경우
-        if self.is_set_dlib_front_face_mode and not self.chk_dlib.isChecked():
-            QMessageBox.warning(self, "Warning", "To use 'Set Front Face (Dlib)', Dlib must be enabled.")
-            self.is_set_dlib_front_face_mode = False 
-            return
-        
-        # MediaPipe 정면 설정 모드가 켜져 있는데 MediaPipe가 비활성화된 경우
-        if self.is_set_mediapipe_front_face_mode and not self.chk_mediapipe.isChecked():
-            QMessageBox.warning(self, "Warning", "To use 'Set Front Face (MediaPipe)', MediaPipe must be enabled.")
-            self.is_set_mediapipe_front_face_mode = False
-            return
-
-        # 소켓 IP/Port 값 저장
-        self.socket_ip = self.txt_socket_ip.text()
-        self.socket_port = int(self.txt_socket_port.text())
-        
-        # Check if this is an image sequence
-        image_files = self.txt_source.get_image_files()
-        # 만약 source가 0(웹캠) 또는 비디오 파일이면 image_files를 비움
-        if self.txt_source.text().strip() == '0' or self.txt_source.text().strip().lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v')):
-            image_files = []
-        is_image_sequence = len(image_files) > 0
-        
-        # VideoThread에 전달
+        # 'Start' 버튼을 누르는 시점에 현재 GUI 상태를 읽어옵니다.
         config_args = {
-            'weights': Path(self.txt_weights.text()),
             'source': self.txt_source.text(),
-            'imgsz': 640,
-            'conf_thres': 0.10,
-            'iou_thres': 0.45,
-            'max_det': 10,  # 여러 얼굴을 감지하여 가장 큰 얼굴 선택
-            'device': '',
-            'view_img': True,
-            'save_txt': False,
-            'save_conf': False,
-            'save_crop': False,
-            'nosave': True,
-            'classes': None,
-            'agnostic_nms': False,
-            'augment': False,
-            'visualize': True,
-            'update': False,
-            'project': ROOT / 'runs/detect',
-            'name': 'exp',
-            'exist_ok': False,
-            'line_thickness': 3,
-            'hide_labels': False,
-            'hide_conf': False,
-            'half': False,
-            'dnn': False,
-            'enable_dlib': self.chk_dlib.isChecked(),
+            'weights': self.txt_weights.text(),
             'enable_yolo': self.chk_yolo.isChecked(),
+            'enable_dlib': self.chk_dlib.isChecked(),
             'enable_mediapipe': self.chk_mediapipe.isChecked(),
-            'socket_ip': self.socket_ip,
-            'socket_port': self.socket_port,
-            'image_files': image_files,
-            'current_image_index': 0,
-            'is_image_sequence': is_image_sequence,
-            'enable_socket_sending': self.chk_send_socket.isChecked()  # 소켓 전송 활성화 여부 추가
+            'enable_openvino': self.chk_openvino.isChecked(),
+            # ... (다른 모든 필요한 설정값들) ...
+            'is_set_dlib_front_face_mode': self.is_set_dlib_front_face_mode,
+            'is_set_mediapipe_front_face_mode': self.is_set_mediapipe_front_face_mode,
+            'is_set_openvino_front_face_mode': self.is_set_openvino_front_face_mode,
+            'enable_socket_sending': self.chk_send_socket.isChecked(),
+            'socket_ip': self.txt_socket_ip.text(),
+            'socket_port': int(self.txt_socket_port.text())
         }
 
-        if config_args['enable_dlib']:
-            dlib_predictor_path = str(ROOT / 'models' / 'shape_predictor_68_face_landmarks.dat')
-            if not Path(dlib_predictor_path).exists():
-                QMessageBox.warning(self, "Dlib Error", 
-                                    f"Dlib shape predictor file not found at:\n{dlib_predictor_path}\n"
-                                    "Dlib analysis will be disabled. Please check the file path.")
-                config_args['enable_dlib'] = False
-        
-        if config_args['enable_yolo'] and not config_args['weights'].exists():
-             QMessageBox.critical(self, "YOLOv5 Error",
-                                  f"YOLOv5 weights file not found at:\n{config_args['weights']}\n"
-                                  "Please check the file path or disable YOLOv5.")
-             return
-
-        self.video_thread = VideoThread(config_args)
-        self.video_thread.change_pixmap_signal.connect(self.update_image)
+        self.thread = VideoThread(config_args)
+        self.thread.change_pixmap_signal.connect(self.update_image)
         # VideoThread에 현재 정면 설정 모드 상태 전달 (새로운 속성 사용)
-        self.video_thread.set_dlib_front_face_mode = self.is_set_dlib_front_face_mode
-        self.video_thread.set_mediapipe_front_face_mode = self.is_set_mediapipe_front_face_mode
+        self.thread.set_dlib_front_face_mode = self.is_set_dlib_front_face_mode
+        self.thread.set_mediapipe_front_face_mode = self.is_set_mediapipe_front_face_mode
+        self.thread.set_openvino_front_face_mode = self.is_set_openvino_front_face_mode
 
-        self.video_thread.start()
+        self.thread.start()
 
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.btn_next_image.setEnabled(is_image_sequence)
+        self.btn_next_image.setEnabled(self.thread.is_image_sequence)
 
     def stop_detection(self):
-        if self.video_thread:
-            self.video_thread.stop()
-            self.video_thread.wait()
-            self.video_thread = None
+        if self.thread:
+            self.thread.stop()
+            self.thread.wait()
+            self.thread = None
         
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
@@ -728,6 +783,7 @@ class MainApp(QWidget):
         # 감지 중지 시에는 정면 설정 체크박스를 다시 활성화
         self.update_front_face_checkbox_states()
         self.is_set_mediapipe_front_face_mode = False
+        self.is_set_openvino_front_face_mode = False
 
 
     @pyqtSlot(np.ndarray)
@@ -743,12 +799,12 @@ class MainApp(QWidget):
         pixmap = QPixmap.fromImage(convert_to_Qt_format)
         
         # Check if this is an image sequence (not video/webcam)
-        if hasattr(self, 'video_thread') and self.video_thread and hasattr(self.video_thread, 'is_image_sequence') and self.video_thread.is_image_sequence:
+        if hasattr(self, 'thread') and self.thread and hasattr(self.thread, 'is_image_sequence') and self.thread.is_image_sequence:
             # For images, don't stretch - keep aspect ratio and fit within label
-            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         else:
             # For video/webcam, use the original scaling behavior
-            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
         self.image_label.setPixmap(scaled_pixmap)
 
@@ -757,7 +813,7 @@ class MainApp(QWidget):
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        scaled_img = convert_to_Qt_format.scaled(self.image_label.width(), self.image_label.height(), Qt.KeepAspectRatio)
+        scaled_img = convert_to_Qt_format.scaled(self.image_label.width(), self.image_label.height(), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_img)
 
     def toggle_calibration_mode(self):
@@ -772,13 +828,18 @@ class MainApp(QWidget):
             # 활성화된 분석기에 따라 캘리브레이션 모드 설정
             if self.chk_dlib.isChecked():
                 self.is_set_dlib_front_face_mode = True
-                if self.video_thread:
-                    self.video_thread.set_dlib_front_face_mode = True
+                if self.thread:
+                    self.thread.set_dlib_front_face_mode = True
                     
             if self.chk_mediapipe.isChecked():
                 self.is_set_mediapipe_front_face_mode = True
-                if self.video_thread:
-                    self.video_thread.set_mediapipe_front_face_mode = True
+                if self.thread:
+                    self.thread.set_mediapipe_front_face_mode = True
+                    
+            if self.chk_openvino.isChecked():
+                self.is_set_openvino_front_face_mode = True
+                if self.thread:
+                    self.thread.set_openvino_front_face_mode = True
                     
         else:
             # 캘리브레이션 모드 비활성화
@@ -788,27 +849,33 @@ class MainApp(QWidget):
             # 모든 캘리브레이션 모드 해제
             self.is_set_dlib_front_face_mode = False
             self.is_set_mediapipe_front_face_mode = False
+            self.is_set_openvino_front_face_mode = False
             
-            if self.video_thread:
-                self.video_thread.set_dlib_front_face_mode = False
-                self.video_thread.set_mediapipe_front_face_mode = False
+            if self.thread:
+                self.thread.set_dlib_front_face_mode = False
+                self.thread.set_mediapipe_front_face_mode = False
+                self.thread.set_openvino_front_face_mode = False
 
-    def image_label_mouse_press_event(self, event):
+    def image_label_mouse_press_event(self, event: 'QMouseEvent'):
         """통합 캘리브레이션 모드에서 마우스 클릭 처리"""
-        if not self.is_calibration_mode or not self.video_thread or not self.video_thread.isRunning():
-            return
+        if not self.is_calibration_mode or not self.thread or not self.thread.isRunning():
+                return
             
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             print("Mouse clicked to trigger calibration.")
             
             # 활성화된 분석기에 따라 캘리브레이션 트리거 설정
             if self.chk_dlib.isChecked() and self.is_set_dlib_front_face_mode:
-                self.video_thread.dlib_calibration_trigger = True
+                self.thread.dlib_calibration_trigger = True
                 print("Dlib calibration triggered.")
-                
+        
             if self.chk_mediapipe.isChecked() and self.is_set_mediapipe_front_face_mode:
-                self.video_thread.mediapipe_calibration_trigger = True
+                self.thread.mediapipe_calibration_trigger = True
                 print("MediaPipe calibration triggered.")
+                
+            if self.chk_openvino.isChecked() and self.is_set_openvino_front_face_mode:
+                self.thread.openvino_calibration_trigger = True
+                print("OpenVINO calibration triggered.")
 
     def open_config_editor(self):
         """설정 편집기를 엽니다."""
@@ -850,16 +917,21 @@ class MainApp(QWidget):
             QMessageBox.warning(self, "Error", f"설정 편집기를 열 수 없습니다: {e}")
 
     def closeEvent(self, event):
+        """
+        PyQt에서 창이 닫힐 때 자동으로 호출되는 함수입니다.
+        """
+        print("Closing application...")
+        self._save_gui_state()
         self.stop_detection()
-        super().closeEvent(event)
+        event.accept()         # 창 닫기 허용
 
     def next_image(self):
         """Manually advance to the next image in the sequence"""
-        if self.video_thread and hasattr(self.video_thread, 'is_image_sequence') and self.video_thread.is_image_sequence:
-            if self.video_thread.current_image_index < len(self.video_thread.image_files) - 1:
-                self.video_thread.current_image_index += 1
+        if self.thread and hasattr(self.thread, 'is_image_sequence') and self.thread.is_image_sequence:
+            if self.thread.current_image_index < len(self.thread.image_files) - 1:
+                self.thread.current_image_index += 1
                 # Force the thread to process the next image
-                self.video_thread.process_image_sequence()
+                self.thread.process_image_sequence()
             else:
                 QMessageBox.information(self, "End of Sequence", "This is the last image in the sequence.")
 
@@ -884,6 +956,38 @@ class MainApp(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"설정을 다시 로드할 수 없습니다: {e}")
             print(f"Error reloading config: {e}")
+
+    def _load_gui_state(self):
+        try:
+            with open(GUI_STATE_FILE, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {} # Return empty dict if file not found or invalid
+
+    def _save_gui_state(self):
+        state = {
+            "enable_yolo": self.chk_yolo.isChecked(),
+            "enable_dlib": self.chk_dlib.isChecked(),
+            "enable_mediapipe": self.chk_mediapipe.isChecked(),
+            "enable_openvino": self.chk_openvino.isChecked(),
+            "hide_labels": self.hide_labels_var.get(),
+            "hide_conf": self.hide_conf_var.get(),
+            "show_fps": self.show_fps_var.get(),
+            "debug_mode": self.debug_mode_var.get(),
+            "source": self.txt_source.text(),
+            "weights": self.txt_weights.text(),
+            "socket_ip": self.socket_ip,
+            "socket_port": self.socket_port,
+            "enable_socket_sending": self.chk_send_socket.isChecked(),
+            "is_set_dlib_front_face_mode": self.is_set_dlib_front_face_mode,
+            "is_set_mediapipe_front_face_mode": self.is_set_mediapipe_front_face_mode,
+            "is_set_openvino_front_face_mode": self.is_set_openvino_front_face_mode
+        }
+        try:
+            with open(GUI_STATE_FILE, 'w') as f:
+                json.dump(state, f, indent=4)
+        except Exception as e:
+            print(f"Error saving GUI state: {e}")
 
 
 if __name__ == "__main__":
