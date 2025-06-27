@@ -11,6 +11,10 @@ scipy
 torch
 torchvision
 
+# OpenVINO (Intel 딥러닝 추론 엔진)
+openvino
+openvino-dev
+
 # GUI Framework
 PyQt5
 
