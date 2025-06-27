@@ -9,9 +9,9 @@ from config_manager import get_openvino_config
 class OpenVINOAnalyzer:
     def __init__(self, face_model_xml=None, landmark5_model_xml=None, landmark35_model_xml=None, device=None, conf_thres=None):
         # 모델 경로 설정
-        self.face_detection_model_xml = face_model_xml or Path("intel/face-detection-adas-0001/FP16/face-detection-adas-0001.xml")
-        self.landmark5_model_xml = landmark5_model_xml or Path("intel/landmarks-regression-retail-0009/FP16/landmarks-regression-retail-0009.xml")
-        self.landmark35_model_xml = landmark35_model_xml or Path("intel/facial-landmarks-35-adas-0002/FP16/facial-landmarks-35-adas-0002.xml")
+        self.face_detection_model_xml = face_model_xml or Path("intel/face-detection-adas-0001.xml")
+        self.landmark5_model_xml = landmark5_model_xml or Path("intel/landmarks-regression-retail-0009.xml")
+        self.landmark35_model_xml = landmark35_model_xml or Path("intel/facial-landmarks-35-adas-0002.xml")
         self.device = device or "CPU"
         self.conf_thres = conf_thres or get_openvino_config("conf_thres", 0.5)
         self.face_bbox_scale = get_openvino_config('face_bbox_scale', 1.3)
