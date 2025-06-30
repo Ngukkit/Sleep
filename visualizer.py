@@ -31,7 +31,7 @@ class Visualizer:
         self.text_x_align = 10
         self.fps_y = 30
         self.yolo_info_start_y = 60
-        self.dlib_info_start_y = 100
+        self.dlib_info_start_y = 50
         self.mediapipe_info_start_y = 200
         self.text_spacing = 30
         # Dlib, MediaPipe 정면 상태 표시 위치 조정
@@ -95,7 +95,7 @@ class Visualizer:
         # ⭐ 위험 상태 표시 (최우선 표시)
         if dlib_results.get("is_dangerous_condition"):
             dangerous_message = dlib_results.get("dangerous_condition_message", "DANGER: Eyes Closed + Head Down!")
-            cv2.putText(frame, dangerous_message, (self.text_x_align, self.dlib_info_start_y - 40), 
+            cv2.putText(frame, dangerous_message, (self.text_x_align, self.dlib_info_start_y ), 
                        self.font, self.font_scale + 0.2, (0, 0, 255), 3)  # 더 큰 폰트와 두꺼운 선
             # print(f"[Visualizer] Displaying Dlib dangerous condition: {dangerous_message}")
 
@@ -252,24 +252,41 @@ class Visualizer:
                 )
 
         # ----------------------------------------------------
-        # 5. 분석 결과 텍스트 오버레이
+        # 4. 분석 결과 텍스트 오버레이 (오른쪽 제일 위에서부터 차례로 표시)
         # ----------------------------------------------------
         h, w, _ = image.shape
-        text_y_offset = 30
-        text_x_offset = 400
+        # MediaPipe 텍스트를 오른쪽 제일 위에서부터 시작
+        text_y_offset = 30  # 제일 위에서 30픽셀
+        text_x_offset = w - 250  # 오른쪽에서 300픽셀 왼쪽
+        text_spacing = 25  # 25픽셀 간격으로 통일
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5
         color = (0, 255, 0) # 초록색
         warning_color = (0, 0, 255) # 빨간색
         danger_color = (0, 0, 255) # 위험 상태용 빨간색
         
-        # ⭐ 위험 상태 표시 (최우선 표시)
+        # Danger/Warning 메시지 우선 표시 (제일 위)
+        danger_y_offset = text_y_offset
+        # 1. Danger: 눈감고 고개숙임
         if mp_display_results.get("is_dangerous_condition"):
             dangerous_message = mp_display_results.get("dangerous_condition_message", "DANGER: Eyes Closed + Head Down!")
-            cv2.putText(image, dangerous_message, (text_x_offset, text_y_offset), 
-                       font, font_scale + 0.2, danger_color, 3)  # 더 큰 폰트와 두꺼운 선
-            text_y_offset += 40
-            # print(f"[Visualizer] Displaying dangerous condition: {dangerous_message}")
+            dangerous_message = dangerous_message.replace("MediaPipe: ", "").replace("Mediapipe: ", "")
+            cv2.putText(image, dangerous_message, (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
+            danger_y_offset += text_spacing
+        # 2. Wake UP
+        drowsy_frame_count = mp_display_results.get("drowsy_frame_count", 0)
+        wakeup_frame_threshold = mp_display_results.get("wakeup_frame_threshold", 60)
+        if drowsy_frame_count >= wakeup_frame_threshold:
+            cv2.putText(image, "Wake UP", (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
+            danger_y_offset += text_spacing
+        # 3. Please look forward
+        distracted_frame_count = mp_display_results.get("distracted_frame_count", 0)
+        distracted_frame_threshold = mp_display_results.get("distracted_frame_threshold", 60)
+        if distracted_frame_count >= distracted_frame_threshold:
+            cv2.putText(image, "Please look forward", (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
+            danger_y_offset += text_spacing
+        # 이후 일반 상태 메시지는 danger_y_offset 이후에 표시
+        text_y_offset = danger_y_offset
         
         # ⭐ 현재 Head Pitch 값 상시 표시
         if 'mp_head_pitch_deg' in mp_display_results:
@@ -277,7 +294,7 @@ class Visualizer:
             # 캘리브레이션 상태에 따른 색상 사용
             head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
             cv2.putText(image, f"Pitch: {pitch_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
-            text_y_offset += 30
+            text_y_offset += text_spacing
         
         # ⭐ (선택 사항) Yaw 값도 상시 표시하려면 추가
         if 'mp_head_yaw_deg' in mp_display_results:
@@ -285,7 +302,7 @@ class Visualizer:
             # 캘리브레이션 상태에 따른 색상 사용
             head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
             cv2.putText(image, f"Yaw: {yaw_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
-            text_y_offset += 30
+            text_y_offset += text_spacing
 
         # ⭐ (선택 사항) Roll 값도 상시 표시하려면 추가
         if 'mp_head_roll_deg' in mp_display_results:
@@ -293,7 +310,7 @@ class Visualizer:
             # 캘리브레이션 상태에 따른 색상 사용
             head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
             cv2.putText(image, f"Roll: {roll_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
-            text_y_offset += 30
+            text_y_offset += text_spacing
             
         # 캘리브레이션된 경우에만 상태 메시지 표시
         is_calibrated = mp_display_results.get("mp_is_calibrated", False)
@@ -301,28 +318,28 @@ class Visualizer:
         # 졸음 감지
             if mp_display_results.get("is_drowsy"):
                 cv2.putText(image, "Drowsy!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
+            text_y_offset += text_spacing
 
             # 하품 감지
             if mp_display_results.get("is_yawning"):
                 cv2.putText(image, "Yawning!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-            text_y_offset += 30
+            text_y_offset += text_spacing
 
             # ⭐ 시선 이탈 감지 (gaze_x 기준)
             if mp_display_results.get("is_gaze"):
-                cv2.putText(image, "look ahead", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)
-                text_y_offset += 30
+                cv2.putText(image, "Look Ahead", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)
+                text_y_offset += text_spacing
 
             # ⭐ 눈동자 기반 시선 감지 결과 표시
             if mp_display_results.get("is_pupil_gaze_deviated"):
                 cv2.putText(image, "Pupil Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
                            font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
             elif mp_display_results.get("enable_pupil_gaze_detection"):
                 # 눈동자 기반 시선 감지가 활성화되어 있지만 이탈하지 않은 경우
                 cv2.putText(image, "Pupil Gaze: OK", (text_x_offset, text_y_offset), 
                            font, font_scale, color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
 
             # 보정된 시선 정보 표시 (새로 추가)
             if 'compensated_gaze_x' in mp_display_results and 'compensated_gaze_y' in mp_display_results:
@@ -330,24 +347,24 @@ class Visualizer:
                 comp_gaze_y = mp_display_results['compensated_gaze_y']
                 cv2.putText(image, f"Comp. Gaze: ({comp_gaze_x:.2f}, {comp_gaze_y:.2f})", 
                            (text_x_offset, text_y_offset), font, font_scale, (255, 255, 0), 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
                 
                 # 보정된 시선 이탈 감지 표시
                 if mp_display_results.get("is_gaze_compensated"):
                     cv2.putText(image, "Comp. Gaze: DEVIATED!", (text_x_offset, text_y_offset), 
                                font, font_scale, (0, 0, 255), 2)
-                    text_y_offset += 30
+                    text_y_offset += text_spacing
                     
             # Gaze 감지가 비활성화된 경우 표시
             if mp_display_results.get("gaze_disabled_due_to_head_rotation"):
                 cv2.putText(image, "Gaze: DISABLED (Head Rotated)", (text_x_offset, text_y_offset), 
                            font, font_scale, (128, 128, 128), 2)  # 회색으로 표시
-                text_y_offset += 30
+                text_y_offset += text_spacing
 
             # 전방 주시 이탈 (캘리브레이션된 경우)
             if mp_display_results.get("is_distracted_from_front"):
                 cv2.putText(image, "Distracted from Front!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
             
                 # ----------------------------------------------------
                 # 6. 새로운 손 감지 상태 표시 (MediaPipe 수정된 로직)
@@ -367,34 +384,34 @@ class Visualizer:
                 # 손 상태 표시
                 if hand_warning_message:
                     display_color = color_map.get(hand_warning_color, (0, 255, 0))
-                    cv2.putText(image, hand_warning_message, (text_x_offset, text_y_offset), 
+                    cv2.putText(image, f"{hand_warning_message}", (text_x_offset, text_y_offset), 
                             font, font_scale, display_color, 2)
-                    text_y_offset += 30
+                    text_y_offset += text_spacing
                 
                 # 손 상태 정보 표시
                 status_color = color_map.get(hand_warning_color, (0, 255, 0))
                 cv2.putText(image, f"Hand Status: {hand_status}", (text_x_offset, text_y_offset), 
                         font, font_scale, status_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
             
                 # 기존 손 이탈 감지 표시 (호환성을 위해 유지)
             if mp_display_results.get("is_left_hand_off"):
                 cv2.putText(image, "Left Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
             if mp_display_results.get("is_right_hand_off"):
                 cv2.putText(image, "Right Hand Off!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
 
             # 얼굴 가림 감지
             if mp_display_results.get("is_eye_occluded_danger"):
                 cv2.putText(image, "Eyes Occluded!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
             elif mp_display_results.get("is_mouth_occluded_as_yawn"):
                 cv2.putText(image, "Mouth Occluded (Yawn?)", (text_x_offset, text_y_offset), font, font_scale, color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
             elif mp_display_results.get("is_face_occluded_by_hand"):
                 cv2.putText(image, "Face Occluded by Hand!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
                 
             # 기타 유용한 정보 표시 (선택 사항)
             # cv2.putText(image, f"EAR: {mp_display_results['mp_ear']:.2f}", (w - 150, 30), font, 0.7, (255, 255, 0), 1)
@@ -402,7 +419,23 @@ class Visualizer:
             
             if mp_display_results.get("is_head_down"):
                 cv2.putText(image, "Head Down!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += 30
+                text_y_offset += text_spacing
+            elif mp_display_results.get("is_head_up"):
+                cv2.putText(image, "Head Up!", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)  # 주황색
+                text_y_offset += text_spacing
+
+            # ⭐ 실제 감지에 사용되는 EAR 값과 임계값 표시
+            mp_ear = mp_display_results.get("mp_ear", None)
+            eye_blink_threshold = mp_display_results.get("eye_blink_threshold", None)
+            if mp_ear is not None and eye_blink_threshold is not None:
+                ear_color = warning_color if mp_ear < eye_blink_threshold else color
+                cv2.putText(image, f"EAR: {mp_ear:.3f} (thresh: {eye_blink_threshold:.3f})", (text_x_offset, text_y_offset), font, font_scale, ear_color, 2)
+                text_y_offset += text_spacing
+
+        else:
+            # 캘리브레이션되지 않은 경우 표시
+            cv2.putText(image, "Not Calibrated", (text_x_offset, text_y_offset), font, font_scale, (128, 128, 128), 2)
+            text_y_offset += text_spacing
         
         return image
 
@@ -494,20 +527,13 @@ class Visualizer:
 
     def draw_i009_landmarks(self, frame, results):
         """OpenVINO 앙상블 모드의 종합적인 졸음 감지 결과를 표시하는 함수"""
-        
-        print(f"[Visualizer] draw_i009_landmarks called with results: {results}")
-        print(f"[Visualizer] Results type: {type(results)}")
-        print(f"[Visualizer] Results keys: {list(results.keys()) if isinstance(results, dict) else 'Not a dict'}")
-        
+   
         faces = results.get("faces", [])
-        print(f"[Visualizer] OpenVINO ensemble faces count: {len(faces)}")
-        
+      
         if len(faces) == 0:
-            print("[Visualizer] No faces detected in OpenVINO results")
             return frame
         
         for face_idx, face in enumerate(faces):
-            print(f"[Visualizer] Processing OpenVINO ensemble face {face_idx}")
             
             # 얼굴 바운딩 박스 그리기
             x1, y1, x2, y2 = face["bbox"]
@@ -531,10 +557,8 @@ class Visualizer:
             
             # 랜드마크 점 그리기 (68개 dlib 랜드마크)
             landmarks = face.get("landmarks_35") or face.get("landmarks_5") or []
-            print(f"[Visualizer] Face {face_idx} landmarks count: {len(landmarks)}")
             
             if len(landmarks) >= 68:  # dlib 68개 랜드마크
-                print(f"[Visualizer] Drawing {len(landmarks)} landmarks for face {face_idx} (dlib 68-point model)")
                 
                 # dlib 68개 랜드마크 그룹별 색상 정의
                 landmark_colors = {
@@ -611,12 +635,6 @@ class Visualizer:
                     # 상태/수치 노란색으로 출력
                     if look_ahead_status:
                         cv2.putText(frame, look_ahead_status, (x1, text_y), self.font, self.font_scale, look_ahead_color, self.thickness)
-                        text_y += text_spacing
-                    # gaze_magnitude 표시
-                    gaze_info = face.get("gaze_info", {})
-                    gaze_magnitude = gaze_info.get("gaze_magnitude", None)
-                    if gaze_magnitude is not None:
-                        cv2.putText(frame, f"Gaze: {gaze_magnitude:.2f}", (x1, text_y), self.font, self.font_scale, look_ahead_color, self.thickness)
                         text_y += text_spacing
                 
                 # MAR 정보
@@ -792,69 +810,81 @@ class Visualizer:
         # 화면 크기 가져오기
         h, w = frame.shape[:2]
         
-        # 텍스트 위치 설정 (화면 아래 중앙)
-        text_x = w // 2 - 150  # 중앙에서 약간 왼쪽
-        text_y = h - 50  # 화면 아래에서 50픽셀 위
-        text_spacing = 25
-        
         # 캘리브레이션 상태 확인
         is_calibrated = face.get("is_calibrated", False)
         calibration_status = face.get("calibration_status", "Not Calibrated")
         calibration_color = face.get("calibration_color", (100, 100, 100))  # 기본 회색
         
-        # 캘리브레이션 상태 표시 (최상단)
+        # === Dlib 텍스트가 끝나는 지점 바로 아래에 OpenVINO 텍스트 표시 ===
+        left_text_x = 10  # 왼쪽 끝에서 10픽셀
+        # Dlib 텍스트가 끝나는 지점 계산: dlib_info_start_y + 6 * text_spacing + 7 * 25 (OpenVINO 7줄)
+        # dlib_info_start_y = 50, text_spacing = 30이므로 50 + 6 * 30 + 7 * 25 = 50 + 180 + 175 = 405
+        left_text_y = self.dlib_info_start_y + 6 * self.text_spacing + 25  # OpenVINO 끝 지점 + 10픽셀 여백
+        text_spacing = 25  # 25픽셀 간격
+        
+        # 1. 캘리브레이션 상태 표시
         cv2.putText(frame, f"OpenVINO: {calibration_status}", 
-                   (text_x, text_y - 4 * text_spacing), 
+                   (left_text_x, left_text_y), 
                    self.font, self.font_scale, calibration_color, self.thickness, cv2.LINE_AA)
         
-        # EAR 정보 - 수정된 형태: "EYE : 수치 OPEN"
+        # 2. EAR 정보
         ear = face.get("ear", 0.0)
         eye_status = face.get("eye_status", "N/A")
         eye_color = (0, 0, 255) if face.get("is_drowsy", False) else (0, 255, 0)
         cv2.putText(frame, f"EYE : {eye_status}", 
-                   (text_x, text_y - 3 * text_spacing), 
+                   (left_text_x, left_text_y + text_spacing), 
                    self.font, self.font_scale, eye_color, self.thickness, cv2.LINE_AA)
         
-        # Look Ahead 상태 표시
+        # 3. Look Ahead 상태 표시
         look_ahead_status = face.get("look_ahead_status", "")
-        look_ahead_color = (0, 255, 255)  # 노란색
+        look_ahead_color = (0, 255, 255)
         if look_ahead_status == "Gaze: OFF":
             # GAZE만 회색으로 출력
-            cv2.putText(frame, "GAZE", (text_x, text_y - 2 * text_spacing), self.font, self.font_scale, (128,128,128), self.thickness)
+            cv2.putText(frame, "GAZE", (left_text_x, left_text_y + 2 * text_spacing), self.font, self.font_scale, (128,128,128), self.thickness)
         else:
             # 상태/수치 노란색으로 출력
             if look_ahead_status:
-                cv2.putText(frame, look_ahead_status, (text_x, text_y - 2 * text_spacing), self.font, self.font_scale, look_ahead_color, self.thickness)
-                text_y += text_spacing
-            # gaze_magnitude 표시
-            gaze_info = face.get("gaze_info", {})
-            gaze_magnitude = gaze_info.get("gaze_magnitude", None)
-            if gaze_magnitude is not None:
-                cv2.putText(frame, f"Gaze: {gaze_magnitude:.2f}", (text_x, text_y - text_spacing), self.font, self.font_scale, look_ahead_color, self.thickness)
-                text_y += text_spacing
+                cv2.putText(frame, look_ahead_status, (left_text_x, left_text_y + 2 * text_spacing), self.font, self.font_scale, look_ahead_color, self.thickness)
         
-        # MAR 정보
+        # 4. gaze_magnitude 표시
+        gaze_info = face.get("gaze_info", {})
+        gaze_magnitude = gaze_info.get("gaze_magnitude", None)
+        if gaze_magnitude is not None:
+            cv2.putText(frame, f"Gaze: {gaze_magnitude:.2f}", (left_text_x, left_text_y + 3 * text_spacing), self.font, self.font_scale, look_ahead_color, self.thickness)
+        
+        # 5. MAR 정보
         mar = face.get("mar", 0.0)
         mouth_status = face.get("mouth_status", "N/A")
         mouth_color = calibration_color if not is_calibrated else ((0, 255, 255) if face.get("is_yawning", False) else (0, 255, 0))
         cv2.putText(frame, f"OpenVINO Mouth: {mar:.3f} ({mouth_status})", 
-                   (text_x, text_y - text_spacing), 
+                   (left_text_x, left_text_y + 4 * text_spacing), 
                    self.font, self.font_scale, mouth_color, self.thickness, cv2.LINE_AA)
         
-        # R/Y/P(roll/yaw/pitch) 정보 한 줄 위로 올리기
+        # 6. R/Y/P(roll/yaw/pitch) 정보
         head_pose = face.get('head_pose', {})
-        cv2.putText(frame, f"OpenVINO: R={head_pose.get('roll',0):.1f} Y={head_pose.get('yaw',0):.1f} P={head_pose.get('pitch',0):.1f}", (text_x, text_y), self.font, self.font_scale, (0,255,0), self.thickness, cv2.LINE_AA)
-        text_y += text_spacing
-        # 종합 상태 표시 (HEAD DOWN 줄에)
-        # 상태 우선순위: DROWSY > HEAD DOWN > DISTRACTED > NORMAL
-        status = "NORMAL"
-        if face.get('is_drowsy', False):
-            status = "DROWSY"
-        elif face.get('is_head_down', False):
-            status = "HEAD DOWN"
-        elif face.get('is_distracted', False):
-            status = "DISTRACTED"
-        cv2.putText(frame, f"OpenVINO: Status: {status}", (text_x, text_y), self.font, self.font_scale, (0,255,0), self.thickness, cv2.LINE_AA)
-        text_y += text_spacing
+        # P 값을 입-턱 거리로 표시 (normalized_distance 사용)
+        normalized_distance = face.get('normalized_distance', 0.0)
+        cv2.putText(frame, f"OpenVINO: R={head_pose.get('roll',0):.1f} Y={head_pose.get('yaw',0):.1f} P={normalized_distance:.3f}", (left_text_x, left_text_y + 5 * text_spacing), self.font, self.font_scale, (0,255,0), self.thickness, cv2.LINE_AA)
+        
+        # 7. Head Down 상태 표시 추가 (캘리브레이션 후에만)
+        if is_calibrated and face.get("is_head_down", False):
+            head_down_text = "OpenVINO: HEAD DOWN!"
+            head_down_color = (0, 0, 255)  # 빨간색
+            cv2.putText(frame, head_down_text, (left_text_x, left_text_y + 6 * text_spacing), self.font, self.font_scale, head_down_color, self.thickness, cv2.LINE_AA)
+        
+        # 8. 종합 상태 표시 (캘리브레이션 후에만)
+        if is_calibrated:
+            # 상태 우선순위: DROWSY > HEAD DOWN > DISTRACTED > NORMAL
+            status = "NORMAL"
+            if face.get('is_drowsy', False):
+                status = "DROWSY"
+            elif face.get('is_head_down', False):
+                status = "HEAD DOWN"
+            elif face.get('is_distracted', False):
+                status = "DISTRACTED"
+            cv2.putText(frame, f"OpenVINO: Status: {status}", (left_text_x, left_text_y + 7 * text_spacing), self.font, self.font_scale, (0,255,0), self.thickness, cv2.LINE_AA)
+        else:
+            # 캘리브레이션 전에는 "Not Calibrated" 표시
+            cv2.putText(frame, "OpenVINO: Not Calibrated", (left_text_x, left_text_y + 7 * text_spacing), self.font, self.font_scale, (100,100,100), self.thickness, cv2.LINE_AA)
         
         return frame

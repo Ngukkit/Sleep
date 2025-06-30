@@ -48,6 +48,10 @@ ENABLE_PUPIL_GAZE_DETECTION = get_mediapipe_config("enable_pupil_gaze_detection"
 PUPIL_GAZE_THRESHOLD = get_mediapipe_config("pupil_gaze_threshold", 0.05)  # 얼굴 크기 대비 임계값
 PUPIL_GAZE_CONSEC_FRAMES = get_mediapipe_config("pupil_gaze_consec_frames", 10)  # 연속 프레임 수
 
+# config.json에서 프레임 임계값 읽기
+WAKEUP_FRAME_THRESHOLD = get_mediapipe_config("wakeup_frame_threshold", 60)
+DISTRACTED_FRAME_THRESHOLD = get_mediapipe_config("distracted_frame_threshold", 60)
+
 class MediaPipeAnalyzer:
     def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None):
         # GUI 호환성을 위해 기본값 설정
@@ -139,6 +143,8 @@ class MediaPipeAnalyzer:
         self.head_up_frame_count, self.gaze_deviated_frame_count = 0, 0
         self.left_hand_off_frame_count, self.right_hand_off_frame_count = 0, 0
         self.distraction_frame_counter = 0  # Add distraction frame counter for consecutive detection
+        self.drowsy_frame_count = 0
+        self.distracted_frame_count = 0
         # print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
 
     def close(self):
@@ -460,6 +466,8 @@ class MediaPipeAnalyzer:
                     results["mp_head_pitch_deg"] = 0.0
                     results["mp_head_yaw_deg"] = 0.0
                     results["mp_head_roll_deg"] = 0.0
+                    results["is_head_down"] = False
+                    results["is_head_up"] = False
                 else:
                     # 정면 이탈 감지 (운전 상황에 맞게 조정)
                     if (abs(current_yaw) > MP_YAW_THRESHOLD or
@@ -472,6 +480,20 @@ class MediaPipeAnalyzer:
                             results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
                             # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
                     
+                    # 고개 숙임/들기 감지 (구분해서 감지)
+                    if current_pitch > PITCH_DOWN_THRESHOLD:
+                        results["is_head_down"] = True
+                        results["is_head_up"] = False
+                        # print(f"[DEBUG] Head down detected: pitch={current_pitch:.1f}>({PITCH_DOWN_THRESHOLD})")
+                    elif current_pitch < PITCH_UP_THRESHOLD:
+                        results["is_head_up"] = True
+                        results["is_head_down"] = False
+                        # print(f"[DEBUG] Head up detected: pitch={current_pitch:.1f}<({PITCH_UP_THRESHOLD})")
+                    else:
+                        results["is_head_down"] = False
+                        results["is_head_up"] = False
+                        # print(f"[DEBUG] Head normal: {PITCH_UP_THRESHOLD}<=pitch={current_pitch:.1f}<={PITCH_DOWN_THRESHOLD}")
+                
                 # Gaze 계산 (간단한 방식)
                 # 눈동자 위치를 기반으로 gaze 계산
                 left_eye_center = np.array([
@@ -695,7 +717,8 @@ class MediaPipeAnalyzer:
                     blendshapes.get("eyeBlinkRight", 0),
                 )
                 avg_blink = (left_eye_blink + right_eye_blink) / 2.0
-                results["ear_value"] = avg_blink
+                results["mp_ear"] = avg_blink  # blendshapes 값 그대로 사용
+                results["ear_value"] = avg_blink  # 기존 호환성 유지
                 results["dynamic_eye_threshold"] = dynamic_eye_threshold  # 디버깅용
                 
                 self.eye_closed_frame_count = (
@@ -840,22 +863,33 @@ class MediaPipeAnalyzer:
                     results["mp_head_pitch_deg"] = 0.0
                     results["mp_head_yaw_deg"] = 0.0
                     results["mp_head_roll_deg"] = 0.0
+                    results["is_head_down"] = False
+                    results["is_head_up"] = False
                 else:
                     # 정면 이탈 감지 (운전 상황에 맞게 조정)
                     if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                        abs(current_roll) > MP_ROLL_THRESHOLD):  # pitch 제외
+                        abs(current_pitch) > MP_PITCH_THRESHOLD):
                         results["is_distracted_from_front"] = True
                         results["mp_is_distracted_from_front"] = True
                         results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
-                            # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), roll={abs(current_roll):.1f}>({MP_ROLL_THRESHOLD})")
+                        # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
                     else:
-                        results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
-                        # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, roll={abs(current_roll):.1f}<={MP_ROLL_THRESHOLD}")
+                            results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
+                            # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
                     
-                # Pitch는 즉시 감지 (기존 로직 유지)
-                if abs(current_pitch) > MP_PITCH_THRESHOLD:
-                    results["is_head_down"] = True
-                    # print(f"[DEBUG] Pitch down detected: pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    # 고개 숙임/들기 감지 (구분해서 감지)
+                    if current_pitch > PITCH_DOWN_THRESHOLD:
+                        results["is_head_down"] = True
+                        results["is_head_up"] = False
+                        # print(f"[DEBUG] Head down detected: pitch={current_pitch:.1f}>({PITCH_DOWN_THRESHOLD})")
+                    elif current_pitch < PITCH_UP_THRESHOLD:
+                        results["is_head_up"] = True
+                        results["is_head_down"] = False
+                        # print(f"[DEBUG] Head up detected: pitch={current_pitch:.1f}<({PITCH_UP_THRESHOLD})")
+                    else:
+                        results["is_head_down"] = False
+                        results["is_head_up"] = False
+                        # print(f"[DEBUG] Head normal: {PITCH_UP_THRESHOLD}<=pitch={current_pitch:.1f}<={PITCH_DOWN_THRESHOLD}")
                 
                 # 위험 상태 감지: 눈을 감은 상태에서 고개가 숙여지는 경우
                 if results["is_drowsy"] and results["is_head_down"]:
@@ -864,8 +898,19 @@ class MediaPipeAnalyzer:
                     # 캘리브레이션된 경우에만 메시지 출력
                     if self.is_calibrated:
                         print("[MediaPipeAnalyzer] DANGEROUS CONDITION DETECTED: Eyes closed and head down!")
-        else:
-            results["is_distracted_no_face"] = True
+        
+        # --- 눈 감김 비율 계산 및 추가 ---
+        # (예시: 평균 눈높이/눈뜨기 최대값 등으로 계산)
+        if face_result and face_result.face_landmarks:
+            lm = face_result.face_landmarks[0].landmark if hasattr(face_result.face_landmarks[0], 'landmark') else face_result.face_landmarks[0]
+            left_eye_height = abs(lm[159].y - lm[145].y)
+            right_eye_height = abs(lm[386].y - lm[374].y)
+            avg_eye_height = (left_eye_height + right_eye_height) / 2
+            max_open = 0.3
+            eye_closed_ratio = 1.0 - min(avg_eye_height / max_open, 1.0)
+            results["eye_closed_ratio"] = eye_closed_ratio
+            # config의 eye_blink_threshold도 함께 전달
+            results["eye_blink_threshold"] = get_mediapipe_config("eye_blink_threshold", 0.25)
 
         # --- Hand Analysis ---
         # 손 감지 로직 수정: 손이 보이면 hand off, 한 손이 보이면 노란색 경고, 두 손이 보이면 빨간색 경고
@@ -935,6 +980,18 @@ class MediaPipeAnalyzer:
             
         # This will be used by the visualizer
         results["are_both_hands_on_wheel"] = not (results["is_left_hand_off"] or results["is_right_hand_off"])
+
+        if results["is_drowsy"]:
+            self.drowsy_frame_count += 1
+        else:
+            self.drowsy_frame_count = 0
+        results["drowsy_frame_count"] = self.drowsy_frame_count
+
+        if results["is_distracted_from_front"]:
+            self.distracted_frame_count += 1
+        else:
+            self.distracted_frame_count = 0
+        results["distracted_frame_count"] = self.distracted_frame_count
 
         return results
 

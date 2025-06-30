@@ -123,7 +123,8 @@ class OpenVINOAnalyzer:
         return new_x1, new_y1, new_x2, new_y2
 
     def extract_landmarks_5(self, frame, face_bbox):
-        x1, y1, x2, y2 = self.expand_bbox(face_bbox, frame.shape, scale=self.face_bbox_scale)
+        # 5점 랜드마크는 정확한 눈동자 위치를 위해 원본 bbox 사용
+        x1, y1, x2, y2 = face_bbox
         face_roi = frame[y1:y2, x1:x2]
         if face_roi.size == 0:
             return []
@@ -141,6 +142,7 @@ class OpenVINOAnalyzer:
         return landmarks
 
     def extract_landmarks_35(self, frame, face_bbox):
+        # 35점 랜드마크는 더 많은 점들을 포함하기 위해 확장된 bbox 사용
         x1, y1, x2, y2 = self.expand_bbox(face_bbox, frame.shape, scale=self.face_bbox_scale)
         face_roi = frame[y1:y2, x1:x2]
         if face_roi.size == 0:
@@ -199,8 +201,10 @@ class OpenVINOAnalyzer:
         self.bbox_history.append(largest_face['bbox'])
         stabilized_bbox = np.mean(np.array(self.bbox_history), axis=0).astype(int).tolist()
         
-        landmarks_5 = self.extract_landmarks_5(frame, stabilized_bbox)
-        landmarks_35 = self.extract_landmarks_35(frame, stabilized_bbox)
+        # 5점 랜드마크: 정확한 눈동자 위치를 위해 원본 bbox 사용
+        landmarks_5 = self.extract_landmarks_5(frame, largest_face['bbox'])
+        # 35점 랜드마크: 더 많은 점들을 포함하기 위해 확장된 bbox 사용
+        landmarks_35 = self.extract_landmarks_35(frame, largest_face['bbox'])
         print(f"[OpenVINOAnalyzer] landmarks_5: {len(landmarks_5)} points, landmarks_35: {len(landmarks_35)} points")
         # --- jump/var 기반 눈 감음 인식 ---
         update_histories_5pt(self.history_dict_5pt, landmarks_5)
@@ -234,7 +238,6 @@ class OpenVINOAnalyzer:
         mouth_y_jump = mouth_y.max() - mouth_y.min() if len(mouth_y) > 0 else 0.0
         mouth_x_var = mouth_x.var() if len(mouth_x) > 0 else 0.0
         mouth_y_var = mouth_y.var() if len(mouth_y) > 0 else 0.0
-        print(f"[DEBUG] left_x_jump: {left_x_jump}, right_x_jump: {right_x_jump}, left_x_var: {left_x_var}, right_x_var: {right_x_var}")
         # 35점 기반 head pose 계산
         pitch, yaw, roll, nose_start, nose_end = (0.0, 0.0, 0.0, (0,0), (0,0))
         if len(landmarks_35) == 35:
@@ -263,15 +266,6 @@ class OpenVINOAnalyzer:
         # --- 눈동자 추적 및 시선 방향 감지 ---
         gaze_info = {}
         if self.enable_pupil_gaze_detection and len(landmarks_35) == 35 and len(landmarks_5) >= 2:
-            print(f"[OpenVINOAnalyzer] Pupil gaze detection enabled")
-            print(f"[DEBUG] About to call is_looking_ahead_35 with:")
-            print(f"[DEBUG] - landmarks_35 count: {len(landmarks_35)}")
-            print(f"[DEBUG] - landmarks_5 count: {len(landmarks_5)}")
-            print(f"[DEBUG] - calibrated_landmarks_35: {self.calibrated_landmarks_35 is not None}")
-            print(f"[DEBUG] - calibrated_landmarks_5: {self.calibrated_landmarks_5 is not None}")
-            print(f"[DEBUG] - gaze_threshold: {self.gaze_threshold}")
-            print(f"[DEBUG] - head_rotation_threshold_for_gaze: {self.head_rotation_threshold_for_gaze}")
-            print(f"[DEBUG] - head_pose: ({pitch}, {yaw}, {roll})")
             
             look_ahead_status, is_looking_ahead, gaze_info = is_looking_ahead_35(
                 landmarks_35,
@@ -282,23 +276,16 @@ class OpenVINOAnalyzer:
                 head_rotation_threshold=self.head_rotation_threshold_for_gaze,
                 head_pose=(pitch, yaw, roll)
             )
-            
-            print(f"[DEBUG] is_looking_ahead_35 returned:")
-            print(f"[DEBUG] - look_ahead_status: {look_ahead_status}")
-            print(f"[DEBUG] - is_looking_ahead: {is_looking_ahead}")
-            print(f"[DEBUG] - gaze_info: {gaze_info}")
-            
-            print(f"[OpenVINOAnalyzer] Raw is_looking_ahead: {is_looking_ahead}")
+
             if is_looking_ahead:
                 self.look_ahead_frames += 1
             else:
                 self.look_ahead_frames = 0
-            print(f"[OpenVINOAnalyzer] look_ahead_frames: {self.look_ahead_frames}/{self.look_ahead_consec_frames}")
+
             if self.is_calibrated:
                 self.is_looking_ahead = self.look_ahead_frames >= self.look_ahead_consec_frames
             else:
                 self.is_looking_ahead = True
-            print(f"[OpenVINOAnalyzer] Final is_looking_ahead: {self.is_looking_ahead}")
         else:
             look_ahead_status = "Gaze: OFF"
             self.is_looking_ahead = True
@@ -309,7 +296,7 @@ class OpenVINOAnalyzer:
             rel_pitch = pitch - self.calibrated_pitch
             rel_yaw = yaw - self.calibrated_yaw
             rel_roll = roll - self.calibrated_roll
-            
+           
             # 캘리브레이션 후 각도 정규화
             def normalize_angle(angle):
                 while angle > 180:
@@ -336,22 +323,25 @@ class OpenVINOAnalyzer:
                 landmarks_35, head_down_threshold=self.head_down_threshold, head_up_threshold=self.head_up_threshold
             )
         
-        if self.is_calibrated:
-            # Head Down (입-턱 거리 기반)
-            if is_head_down_by_distance:
-                self.head_down_frames += 1
-            else:
-                self.head_down_frames = 0
-            self.is_head_down = self.head_down_frames >= self.head_down_consec_frames
+        # Head Down (입-턱 거리 기반) - 캘리브레이션 상태와 관계없이 감지
+        if is_head_down_by_distance:
+            self.head_down_frames += 1
+        else:
+            self.head_down_frames = 0
+        self.is_head_down = self.head_down_frames >= self.head_down_consec_frames
+        
+        # 디버깅: 고개 숙임 상태 출력
+        if len(landmarks_35) == 35:
+            print(f"[OpenVINOAnalyzer] Head down detection - normalized_distance: {normalized_distance:.3f}, threshold: {self.head_down_threshold}, is_head_down_by_distance: {is_head_down_by_distance}, head_down_frames: {self.head_down_frames}, is_head_down: {self.is_head_down}")
 
-            # Distraction (기존 yaw/roll 각도 기반)
+        # Distraction (기존 yaw/roll 각도 기반) - 캘리브레이션된 경우에만
+        if self.is_calibrated:
             if abs(rel_yaw) > self.yaw_threshold or abs(rel_roll) > self.roll_threshold:
                 self.distraction_frames += 1
             else:
                 self.distraction_frames = 0
             self.is_distracted = self.distraction_frames >= self.distraction_consec_frames
         else:
-            self.is_head_down = False
             self.is_distracted = False
             
         # 결과 포맷 (GUI 호환)
@@ -396,6 +386,8 @@ class OpenVINOAnalyzer:
             "gaze_info": gaze_info,
             "is_looking_ahead": self.is_looking_ahead,
             "look_ahead_status": look_ahead_status,
+            # 위험 상태 감지 (눈 감음 + 고개 숙임)
+            "is_dangerous_condition": self.eye_closed_state and self.is_head_down,
         }
         results["faces"].append(face_result)
         return results

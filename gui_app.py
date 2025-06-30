@@ -943,16 +943,23 @@ class MainApp(QWidget):
             # 설정 파일 다시 로드
             config_manager.reload()
             
-            # 성공 메시지 표시
-            QMessageBox.information(
-                self, 
-                "Configuration Reloaded", 
-                "설정 파일이 성공적으로 다시 로드되었습니다.\n"
-                "변경사항이 즉시 적용됩니다."
-            )
-            
+            # 실행 중이면 감지 스레드 재시작
+            if self.thread and self.thread.isRunning():
+                self.stop_detection()
+                import time; time.sleep(0.5)
+                self.start_detection()
+                QMessageBox.information(
+                    self, 
+                    "Configuration Reloaded", 
+                    "설정 파일이 성공적으로 다시 로드되었습니다.\n감지 스레드가 재시작되어 새로운 설정이 적용되었습니다."
+                )
+            else:
+                QMessageBox.information(
+                    self, 
+                    "Configuration Reloaded", 
+                    "설정 파일이 성공적으로 다시 로드되었습니다.\n감지를 시작하면 새로운 설정이 적용됩니다."
+                )
             print("Configuration reloaded successfully")
-            
         except Exception as e:
             QMessageBox.warning(self, "Error", f"설정을 다시 로드할 수 없습니다: {e}")
             print(f"Error reloading config: {e}")
@@ -999,15 +1006,6 @@ if __name__ == "__main__":
     os.environ['GDK_SYNCHRONIZE'] = '0'
     os.environ['GTK_DEBUG'] = '0'
     os.environ['G_MESSAGES_DEBUG'] = 'none'
-    
-    # stderr 리다이렉션으로 경고 메시지 숨기기 (선택사항)
-    # import contextlib
-    # with open(os.devnull, 'w') as devnull:
-    #     with contextlib.redirect_stderr(devnull):
-    #         app = QApplication(sys.argv)
-    #         main_app = MainApp()
-    #         main_app.show()
-    #         sys.exit(app.exec_())
     
     app = QApplication(sys.argv)
     main_app = MainApp()
