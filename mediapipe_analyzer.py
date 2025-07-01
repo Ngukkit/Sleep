@@ -53,7 +53,7 @@ WAKEUP_FRAME_THRESHOLD = get_mediapipe_config("wakeup_frame_threshold", 60)
 DISTRACTED_FRAME_THRESHOLD = get_mediapipe_config("distracted_frame_threshold", 60)
 
 class MediaPipeAnalyzer:
-    def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None):
+    def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None, enable_hand_detection=True):
         # GUI 호환성을 위해 기본값 설정
         if running_mode is None:
             running_mode = vision.RunningMode.VIDEO
@@ -61,6 +61,7 @@ class MediaPipeAnalyzer:
         self.running_mode = running_mode
         self.face_result_callback = face_result_callback
         self.hand_result_callback = hand_result_callback
+        self.enable_hand_detection = enable_hand_detection
 
         # 캘리브레이션 관련 변수들 (GUI 호환성)
         self.mp_front_face_offset_yaw = 0.0
@@ -122,17 +123,20 @@ class MediaPipeAnalyzer:
             )
             self.face_landmarker = vision.FaceLandmarker.create_from_options(face_options)
 
-            hand_options = vision.HandLandmarkerOptions(
-                base_options=python.BaseOptions(model_asset_path=str(hand_model_path)),
-                running_mode=running_mode,
-                result_callback=self.hand_result_callback
-                if running_mode == vision.RunningMode.LIVE_STREAM
-                else None,
-                num_hands=2,
-                min_hand_detection_confidence=MIN_HAND_DETECTION_CONFIDENCE,
-                min_hand_presence_confidence=MIN_HAND_PRESENCE_CONFIDENCE,
-            )
-            self.hand_landmarker = vision.HandLandmarker.create_from_options(hand_options)
+            if self.enable_hand_detection:
+                hand_options = vision.HandLandmarkerOptions(
+                    base_options=python.BaseOptions(model_asset_path=str(hand_model_path)),
+                    running_mode=running_mode,
+                    result_callback=self.hand_result_callback
+                    if running_mode == vision.RunningMode.LIVE_STREAM
+                    else None,
+                    num_hands=2,
+                    min_hand_detection_confidence=MIN_HAND_DETECTION_CONFIDENCE,
+                    min_hand_presence_confidence=MIN_HAND_PRESENCE_CONFIDENCE,
+                )
+                self.hand_landmarker = vision.HandLandmarker.create_from_options(hand_options)
+            else:
+                self.hand_landmarker = None
 
         self.is_closed = False
         (
@@ -913,7 +917,16 @@ class MediaPipeAnalyzer:
             results["eye_blink_threshold"] = get_mediapipe_config("eye_blink_threshold", 0.25)
 
         # --- Hand Analysis ---
-        # 손 감지 로직 수정: 손이 보이면 hand off, 한 손이 보이면 노란색 경고, 두 손이 보이면 빨간색 경고
+        if not self.enable_hand_detection or self.hand_landmarker is None:
+            # 손 감지 완전 비활성화
+            results["hand_status"] = "Hand Detection Disabled"
+            results["hand_warning_color"] = "green"
+            results["hand_warning_message"] = "Hand detection is OFF"
+            results["is_left_hand_off"] = False
+            results["is_right_hand_off"] = False
+            results["are_both_hands_on_wheel"] = True
+            return results
+        
         results["is_left_hand_off"] = False
         results["is_right_hand_off"] = False
         
@@ -1010,13 +1023,15 @@ class MediaPipeAnalyzer:
                 mp_image, int(time.time() * 1000)
             )
         )
-        hand_result = (
-            self.hand_landmarker.detect(mp_image)
-            if self.running_mode == vision.RunningMode.IMAGE
-            else self.hand_landmarker.detect_for_video(
-                mp_image, int(time.time() * 1000)
+        hand_result = None
+        if self.hand_landmarker is not None:
+            hand_result = (
+                self.hand_landmarker.detect(mp_image)
+                if self.running_mode == vision.RunningMode.IMAGE
+                else self.hand_landmarker.detect_for_video(
+                    mp_image, int(time.time() * 1000)
+                )
             )
-        )
         return self._process_results(face_result, hand_result)
 
     def detect_async(self, frame, timestamp_ms):  # LIVE_STREAM 모드용 비동기 함수
@@ -1028,7 +1043,8 @@ class MediaPipeAnalyzer:
             data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
         )
         self.face_landmarker.detect_async(mp_image, timestamp_ms)
-        self.hand_landmarker.detect_async(mp_image, timestamp_ms)
+        if self.hand_landmarker is not None:
+            self.hand_landmarker.detect_async(mp_image, timestamp_ms)
 
     def _calculate_face_size(self, face_landmarks):
         """얼굴 크기를 계산합니다 (면적 기준)"""

@@ -282,7 +282,8 @@ class VideoThread(QThread):
             self.mediapipe_analyzer = mediapipe_analyzer.MediaPipeAnalyzer(
                 running_mode=running_mode,
                 face_result_callback=self.on_face_result if running_mode == vision.RunningMode.LIVE_STREAM else None,
-                hand_result_callback=self.on_hand_result if running_mode == vision.RunningMode.LIVE_STREAM else None
+                hand_result_callback=self.on_hand_result if running_mode == vision.RunningMode.LIVE_STREAM else None,
+                enable_hand_detection=self.config_args.get('enable_mediapipe_hand', True)
             )
         else: # MediaPipe가 비활성화된 경우 None으로 명시적 설정
             self.mediapipe_analyzer = None
@@ -616,6 +617,14 @@ class MainApp(QWidget):
         self.chk_mediapipe.setChecked(self.gui_state.get("enable_mediapipe", False))
         self.chk_mediapipe.stateChanged.connect(self.update_front_face_checkbox_states)
 
+        # --- Hand Off 토글 버튼 추가 ---
+        self.btn_hand_off = QPushButton("Hand Off")
+        self.btn_hand_off.setCheckable(True)
+        # 버튼이 눌려있으면 hand detection OFF, 아니면 ON
+        self.btn_hand_off.setChecked(not self.gui_state.get("enable_mediapipe_hand", True))
+        self.update_hand_off_button_style()
+        self.btn_hand_off.toggled.connect(self.update_hand_off_button_style)
+
         self.chk_openvino = QCheckBox("Enable OpenVINO")
         self.chk_openvino.setChecked(self.gui_state.get("enable_openvino", False))
         self.chk_openvino.stateChanged.connect(self.update_front_face_checkbox_states)
@@ -681,6 +690,7 @@ class MainApp(QWidget):
         control_layout.addWidget(self.chk_yolo)
         control_layout.addWidget(self.chk_dlib)
         control_layout.addWidget(self.chk_mediapipe)
+        control_layout.addWidget(self.btn_hand_off)
         control_layout.addWidget(self.chk_openvino)
         control_layout.addWidget(self.btn_calibrate)
         control_layout.addWidget(self.btn_config)
@@ -728,7 +738,8 @@ class MainApp(QWidget):
             self.chk_mediapipe.isChecked() or 
             self.chk_openvino.isChecked()
         )
-        
+        # Hand Off 버튼 활성화/비활성화
+        self.btn_hand_off.setEnabled(self.chk_mediapipe.isChecked())
         # 캘리브레이션 모드가 활성화되어 있는데 해당 분석기가 비활성화되면 캘리브레이션 모드도 해제
         if self.is_calibration_mode:
             if not (self.chk_dlib.isChecked() or 
@@ -747,6 +758,7 @@ class MainApp(QWidget):
             'enable_yolo': self.chk_yolo.isChecked(),
             'enable_dlib': self.chk_dlib.isChecked(),
             'enable_mediapipe': self.chk_mediapipe.isChecked(),
+            'enable_mediapipe_hand': not self.btn_hand_off.isChecked(),
             'enable_openvino': self.chk_openvino.isChecked(),
             # ... (다른 모든 필요한 설정값들) ...
             'is_set_dlib_front_face_mode': self.is_set_dlib_front_face_mode,
@@ -983,6 +995,7 @@ class MainApp(QWidget):
             "enable_yolo": self.chk_yolo.isChecked(),
             "enable_dlib": self.chk_dlib.isChecked(),
             "enable_mediapipe": self.chk_mediapipe.isChecked(),
+            "enable_mediapipe_hand": not self.btn_hand_off.isChecked(),
             "enable_openvino": self.chk_openvino.isChecked(),
             "source": self.txt_source.text(),
             "weights": self.txt_weights.text(),
@@ -999,6 +1012,14 @@ class MainApp(QWidget):
                 json.dump(state, f, indent=4)
         except Exception as e:
             print(f"Error saving GUI state: {e}")
+
+    def update_hand_off_button_style(self):
+        if self.btn_hand_off.isChecked():
+            # OFF 상태(눌림): 빨간색
+            self.btn_hand_off.setStyleSheet("background-color: #ff6b6b; color: white;")
+        else:
+            # ON 상태(해제): 기본
+            self.btn_hand_off.setStyleSheet("")
 
 
 if __name__ == "__main__":
