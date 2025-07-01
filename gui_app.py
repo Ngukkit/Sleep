@@ -561,11 +561,13 @@ class MainApp(QWidget):
         self.mediapipe_analyzer = None
         self.openvino_analyzer = None
         self.openvino_hybrid_analyzer = None  # OpenVINO 하이브리드 분석기 추가
-        # 소켓 전송용 IP/Port
-        self.socket_ip = "127.0.0.1"
-        self.socket_port = 5001
-
+        
+        # GUI 상태 먼저 로드
         self.gui_state = self._load_gui_state()
+        
+        # 소켓 전송용 IP/Port - 저장된 상태에서 로드
+        self.socket_ip = self.gui_state.get("socket_ip", "127.0.0.1")
+        self.socket_port = self.gui_state.get("socket_port", 5001)
         self.config_manager = ConfigManager()
         
         self.init_ui() # init_ui()를 먼저 호출하여 위젯을 생성합니다.
@@ -622,7 +624,12 @@ class MainApp(QWidget):
         self.btn_calibrate = QPushButton("Calibrate Front Face")
         self.btn_calibrate.setEnabled(False)
         self.btn_calibrate.clicked.connect(self.toggle_calibration_mode)
-        self.is_calibration_mode = False
+        self.is_calibration_mode = self.gui_state.get("is_calibration_mode", False)
+        
+        # 캘리브레이션 모드가 저장되어 있다면 버튼 상태 복원
+        if self.is_calibration_mode:
+            self.btn_calibrate.setText("Cancel Calibration")
+            self.btn_calibrate.setStyleSheet("background-color: #ff6b6b; color: white;")
 
         # 설정 편집 버튼 추가
         self.btn_config = QPushButton("Edit Config")
@@ -635,9 +642,9 @@ class MainApp(QWidget):
         # 소켓 IP/Port 입력란 추가
         socket_layout = QHBoxLayout()
         self.label_socket_ip = QLabel("Socket IP:")
-        self.txt_socket_ip = QLineEdit(self.socket_ip)
+        self.txt_socket_ip = QLineEdit(self.gui_state.get("socket_ip", "127.0.0.1"))
         self.label_socket_port = QLabel("Port:")
-        self.txt_socket_port = QLineEdit(str(self.socket_port))
+        self.txt_socket_port = QLineEdit(str(self.gui_state.get("socket_port", 5001)))
         socket_layout.addWidget(self.label_socket_ip)
         socket_layout.addWidget(self.txt_socket_ip)
         socket_layout.addWidget(self.label_socket_port)
@@ -977,18 +984,15 @@ class MainApp(QWidget):
             "enable_dlib": self.chk_dlib.isChecked(),
             "enable_mediapipe": self.chk_mediapipe.isChecked(),
             "enable_openvino": self.chk_openvino.isChecked(),
-            "hide_labels": self.hide_labels_var.get(),
-            "hide_conf": self.hide_conf_var.get(),
-            "show_fps": self.show_fps_var.get(),
-            "debug_mode": self.debug_mode_var.get(),
             "source": self.txt_source.text(),
             "weights": self.txt_weights.text(),
-            "socket_ip": self.socket_ip,
-            "socket_port": self.socket_port,
+            "socket_ip": self.txt_socket_ip.text(),
+            "socket_port": int(self.txt_socket_port.text()),
             "enable_socket_sending": self.chk_send_socket.isChecked(),
             "is_set_dlib_front_face_mode": self.is_set_dlib_front_face_mode,
             "is_set_mediapipe_front_face_mode": self.is_set_mediapipe_front_face_mode,
-            "is_set_openvino_front_face_mode": self.is_set_openvino_front_face_mode
+            "is_set_openvino_front_face_mode": self.is_set_openvino_front_face_mode,
+            "is_calibration_mode": self.is_calibration_mode
         }
         try:
             with open(GUI_STATE_FILE, 'w') as f:

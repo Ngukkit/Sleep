@@ -1,0 +1,15 @@
+{
+    "enable_yolo": false,
+    "enable_dlib": false,
+    "enable_mediapipe": false,
+    "enable_openvino": true,
+    "source": "0",
+    "weights": "/home/kkit/programming/python/sleep/weights/best.pt",
+    "socket_ip": "127.0.0.1",
+    "socket_port": 5001,
+    "enable_socket_sending": false,
+    "is_set_dlib_front_face_mode": false,
+    "is_set_mediapipe_front_face_mode": false,
+    "is_set_openvino_front_face_mode": false,
+    "is_calibration_mode": false
+}
