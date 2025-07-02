@@ -37,6 +37,8 @@ class Visualizer:
         # Dlib, MediaPipe 정면 상태 표시 위치 조정
         self.dlib_front_status_y = self.dlib_info_start_y + 5 * self.text_spacing
         self.mediapipe_front_status_y = self.mediapipe_info_start_y + 4 * self.text_spacing
+        # Crop offset 설정
+        self.crop_offset = 0
 
     def draw_yolov5_results(self, frame, detections, names, hide_labels=False, hide_conf=False):
         tl = self.line_thickness
@@ -62,8 +64,9 @@ class Visualizer:
                 yolo_status = f"YOLO: Yawning ({confidence:.2f})"
                 yolo_color = (51, 255, 255)
         
-        # 좌측 제일 위에 YOLO 상태 표시 (0.5 크기)
-        cv2.putText(frame, yolo_status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, yolo_color, 2)
+        # 좌측 제일 위에 YOLO 상태 표시 (0.5 크기) - crop offset 적용
+        y_pos = 30 + self.crop_offset  # 양수일 때 아래로 이동
+        cv2.putText(frame, yolo_status, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, yolo_color, 2)
         
         if detections is not None and len(detections):
             for *xyxy, conf, cls in reversed(detections):
@@ -92,10 +95,10 @@ class Visualizer:
         mouth_color = dlib_results.get("mouth_color", (100, 100, 100))
         head_pose_color = dlib_results.get("head_pose_color", (100, 100, 100))
 
-        # ⭐ 위험 상태 표시 (최우선 표시)
+        # ⭐ 위험 상태 표시 (최우선 표시) - crop offset 적용
         if dlib_results.get("is_dangerous_condition"):
             dangerous_message = dlib_results.get("dangerous_condition_message", "DANGER: Eyes Closed + Head Down!")
-            cv2.putText(frame, dangerous_message, (self.text_x_align, self.dlib_info_start_y ), 
+            cv2.putText(frame, dangerous_message, (self.text_x_align, self.dlib_info_start_y), 
                        self.font, self.font_scale + 0.2, (0, 0, 255), 3)  # 더 큰 폰트와 두꺼운 선
             # print(f"[Visualizer] Displaying Dlib dangerous condition: {dangerous_message}")
 
@@ -119,7 +122,7 @@ class Visualizer:
         cv2.putText(frame, head_roll_text, (self.text_x_align, self.dlib_info_start_y + 4 * self.text_spacing),
                     self.font, self.font_scale, head_pose_color, self.thickness, cv2.LINE_AA)
 
-        # Dlib Head Down 상태 표시 추가
+        # Dlib Head Down 상태 표시 추가 - crop offset 적용
         is_head_down = dlib_results.get('is_head_down', False)
         if is_head_down:
             head_down_text = "Dlib Head: DOWN!"
@@ -441,22 +444,22 @@ class Visualizer:
 
     def draw_fps(self, frame, fps):
         h, w = frame.shape[:2]
-        # 중앙 위에 FPS 표시
+        # 중앙 위에 FPS 표시 - crop offset 적용
         fps_text = f"FPS: {fps:.2f}"
         text_size = cv2.getTextSize(fps_text, self.font, self.font_scale, self.thickness)[0]
         text_x = (w - text_size[0]) // 2  # 중앙 정렬
-        cv2.putText(frame, fps_text, (text_x, 30), self.font, self.font_scale, (0, 255, 255), self.thickness, cv2.LINE_AA)
+        cv2.putText(frame, fps_text, (text_x, 30 + self.crop_offset), self.font, self.font_scale, (0, 255, 255), self.thickness, cv2.LINE_AA)
         return frame
 
     def draw_mediapipe_front_status(self, image, is_calibrated, is_distracted):
         status_text = f"MP Calibrated: {'Yes' if is_calibrated else 'No'}"
         status_color = (0, 255, 0) if is_calibrated else (0, 0, 255)
-        cv2.putText(image, status_text, (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+        cv2.putText(image, status_text, (10, 180 + self.crop_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
 
         if is_calibrated:
             distracted_text = f"MP Distracted: {'Yes' if is_distracted else 'No'}"
             distracted_color = (0, 0, 255) if is_distracted else (0, 255, 0)
-            cv2.putText(image, distracted_text, (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.6, distracted_color, 2)
+            cv2.putText(image, distracted_text, (10, 210 + self.crop_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, distracted_color, 2)
         return image
 
     def draw_openvino_face_results(self, frame, results):

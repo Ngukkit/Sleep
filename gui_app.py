@@ -11,6 +11,7 @@ import numpy as np
 from scipy.spatial import distance as dist
 import json
 from PIL import Image, ImageTk
+from PIL.ExifTags import TAGS
 from config_manager import ConfigManager, get_mediapipe_config, get_openvino_config
 
 import visualizer
@@ -39,6 +40,56 @@ from detector_utils import calculate_ear, calculate_mar
 
 GUI_STATE_FILE = "gui_state.json"
 
+def get_exif_orientation(image_path):
+    """EXIF Orientation 정보를 읽어서 회전 방향을 반환"""
+    # 비디오 파일인 경우 EXIF 읽기 시도하지 않음
+    video_extensions = ['.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v']
+    file_ext = Path(image_path).suffix.lower()
+    
+    if file_ext in video_extensions:
+        print(f"[EXIF] Video file detected, no rotation applied")
+        return 1  # 회전 없음 (기본값)
+    
+    # 이미지 파일인 경우 EXIF 정보 읽기 시도
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+            if exif:
+                for tag_id in exif:
+                    tag = TAGS.get(tag_id, tag_id)
+                    data = exif.get(tag_id)
+                    if tag == 'Orientation':
+                        print(f"[EXIF] Image orientation: {data}")
+                        return data
+    except Exception as e:
+        print(f"Error reading EXIF data: {e}")
+    
+    print(f"[EXIF] No rotation applied (default)")
+    return 1  # 기본값 (회전 없음)
+
+def apply_exif_rotation(frame, orientation):
+    """EXIF Orientation에 따라 프레임을 회전"""
+    if orientation == 1:
+        return frame  # 정상
+    elif orientation == 2:
+        return cv2.flip(frame, 1)  # 좌우 반전
+    elif orientation == 3:
+        return cv2.rotate(frame, cv2.ROTATE_180)  # 180도 회전
+    elif orientation == 4:
+        return cv2.flip(frame, 0)  # 상하 반전
+    elif orientation == 5:
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        return cv2.flip(frame, 1)  # 90도 시계방향 + 좌우 반전
+    elif orientation == 6:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)  # 90도 시계방향
+    elif orientation == 7:
+        frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        return cv2.flip(frame, 1)  # 90도 반시계방향 + 좌우 반전
+    elif orientation == 8:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)  # 90도 반시계방향
+    else:
+        return frame  # 알 수 없는 값은 그대로 반환
+
 class DragDropLineEdit(QLineEdit):
     """Custom QLineEdit that accepts drag and drop for video and image files"""
     
@@ -53,7 +104,7 @@ class DragDropLineEdit(QLineEdit):
             event.acceptProposedAction()
         else:
             event.ignore()
-    
+        
     def dropEvent(self, event):
         urls = event.mimeData().urls()
         if urls:
@@ -125,6 +176,9 @@ class VideoThread(QThread):
         self.openvino_analyzer = None
         self.openvino_hybrid_analyzer = None  # OpenVINO 하이브리드 분석기 추가
 
+        # EXIF 회전 정보 저장
+        self.exif_orientation = 1
+
         # Front Face Calibration related variables
         self._dlib_calibration_trigger = False
         self._mediapipe_calibration_trigger = False
@@ -160,6 +214,9 @@ class VideoThread(QThread):
         # --- 강력한 FPS 제한을 위한 추가 변수 ---
         self.frame_skip_counter = 0
         self.max_frame_skip = 3  # 최대 3프레임 스킵
+
+        # Crop offset
+        self._crop_offset = 0
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -215,6 +272,18 @@ class VideoThread(QThread):
     def set_openvino_front_face_mode(self, value):
         self._set_openvino_front_face_mode = value
 
+    # Crop offset getter/setter
+    @property
+    def crop_offset(self):
+        return self._crop_offset
+
+    @crop_offset.setter
+    def crop_offset(self, value):
+        self._crop_offset = value
+        # Visualizer에도 즉시 반영
+        if hasattr(self, 'visualizer_instance'):
+            self.visualizer_instance.crop_offset = value
+
     def on_face_result(self, result: 'vision.FaceLandmarkerResult', image: 'mp_Image', timestamp_ms: int):
         self.latest_face_result = result
 
@@ -238,6 +307,18 @@ class VideoThread(QThread):
         enable_openvino = self.config_args.get('enable_openvino', False)
         enable_openvino_hybrid = self.config_args.get('enable_openvino_hybrid', False)  # 하이브리드 모드 추가
         # mediapipe_mode_str = self.config_args.get('mediapipe_mode', 'Video (File)')
+        
+        # Aspect ratio 설정 가져오기
+        self.aspect_ratio_mode = self.config_args.get('aspect_ratio', 0)  # 0=Stretch, 1=Fit, 2=Crop, 3=Crop(Top)
+        
+        # Crop offset 설정 가져오기
+        try:
+            self._crop_offset = int(self.config_args.get('crop_offset', '0'))
+        except ValueError:
+            self._crop_offset = 0
+        
+        # Visualizer에 초기 crop offset 설정
+        self.visualizer_instance.crop_offset = self._crop_offset
         
         # 모듈 초기화
         if enable_yolo:
@@ -293,6 +374,19 @@ class VideoThread(QThread):
             # print(f"[VideoThread] Processing image sequence with {len(self.image_files)} images")
             self.process_image_sequence()
         else:
+            # 사용자 선택 회전 설정 가져오기
+            user_rotation = self.config_args.get('video_rotation', 0)
+            if user_rotation == 0:
+                # 사용자가 "No Rotation" 선택한 경우에만 EXIF 정보 읽기
+                if not source.isdigit() and Path(source).exists():
+                    self.exif_orientation = get_exif_orientation(source)
+                    print(f"[VideoThread] EXIF orientation: {self.exif_orientation}")
+            else:
+                # 사용자가 회전을 선택한 경우 해당 회전 적용
+                rotation_map = {1: 6, 2: 8, 3: 3}  # 1=90°CW, 2=90°CCW, 3=180°
+                self.exif_orientation = rotation_map.get(user_rotation, 1)
+                print(f"[VideoThread] User selected rotation: {user_rotation} -> orientation: {self.exif_orientation}")
+            
             # Original video/webcam processing
             cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_V4L2)
             if not cap.isOpened():
@@ -322,6 +416,10 @@ class VideoThread(QThread):
                     break
 
                 im0 = frame.copy()
+                
+                # EXIF 회전 정보 적용
+                im0 = apply_exif_rotation(im0, self.exif_orientation)
+                
                 frame_h, frame_w, _ = im0.shape # 현재 프레임의 크기
 
                     # Process frame with all analyzers
@@ -367,8 +465,12 @@ class VideoThread(QThread):
     def process_frame(self, im0, frame_h, frame_w, enable_yolo, enable_dlib, enable_mediapipe, 
                      enable_openvino, conf_thres, iou_thres, max_det, hide_labels, hide_conf):
         """Process a single frame with all enabled analyzers"""
-
-            # --- 1. YOLOv5 Detection ---
+        
+        # --- 0. Crop 먼저 적용 ---
+        im0 = self.apply_aspect_crop(im0)
+        # Visualizer에 crop offset 설정은 더이상 필요 없음
+        # 이하 기존 분석/시각화 코드 유지
+        # --- 1. YOLOv5 Detection ---
         yolo_dets = torch.tensor([])
         if enable_yolo and self.yolo_detector:
             yolo_dets, _, _ = self.yolo_detector.detect(
@@ -547,6 +649,44 @@ class VideoThread(QThread):
         # This method can be implemented based on your existing driver status analysis logic
         pass
 
+    def apply_aspect_crop(self, frame):
+        # aspect_ratio_mode: 0=Stretch, 1=Fit, 2=Crop, 3=Crop(Top)
+        aspect_index = getattr(self, 'aspect_ratio_mode', 0)
+        crop_offset = getattr(self, '_crop_offset', 0)
+        label_width = 800  # image_label width (고정)
+        label_height = 600 # image_label height (고정)
+        h, w, ch = frame.shape
+        # Stretch, Fit은 crop 없음
+        if aspect_index == 0 or aspect_index == 1:
+            return frame
+        # Crop, Crop(Top)
+        # 비율 유지하고 화면을 채우도록 조정 (잘림 발생 가능)
+        import cv2
+        from PyQt5.QtCore import Qt
+        scaled = cv2.resize(frame, (label_width, label_height), interpolation=cv2.INTER_LINEAR)
+        # 원본 비율 유지 crop
+        frame_aspect = w / h
+        label_aspect = label_width / label_height
+        if frame_aspect > label_aspect:
+            # 좌우가 더 넓음: 좌우를 crop
+            new_w = int(h * label_aspect)
+            x = (w - new_w) // 2
+            cropped = frame[:, x:x+new_w]
+        else:
+            # 상하가 더 큼: 상하를 crop
+            new_h = int(w / label_aspect)
+            if aspect_index == 2:
+                # 중앙 기준 crop + offset
+                y = (h - new_h) // 2 + crop_offset
+            else:
+                # 상단 기준 crop + offset
+                y = 0 + crop_offset
+            y = max(0, min(y, h - new_h))
+            cropped = frame[y:y+new_h, :]
+        # 최종 리사이즈
+        cropped = cv2.resize(cropped, (label_width, label_height), interpolation=cv2.INTER_LINEAR)
+        return cropped
+
 
 class MainApp(QWidget):
     def __init__(self):
@@ -664,6 +804,42 @@ class MainApp(QWidget):
         self.chk_send_socket.setChecked(self.gui_state.get("enable_socket_sending", False))
         socket_layout.addWidget(self.chk_send_socket)
 
+        # --- 비디오 회전 옵션 추가 ---
+        rotation_layout = QHBoxLayout()
+        self.label_rotation = QLabel("Video Rotation:")
+        self.combo_rotation = QComboBox()
+        self.combo_rotation.addItems(["No Rotation", "90° Clockwise", "90° Counter-clockwise", "180°"])
+        # 저장된 회전 설정 로드
+        rotation_index = self.gui_state.get("video_rotation", 0)
+        self.combo_rotation.setCurrentIndex(rotation_index)
+        rotation_layout.addWidget(self.label_rotation)
+        rotation_layout.addWidget(self.combo_rotation)
+        
+        # --- Aspect Ratio 옵션 추가 ---
+        self.label_aspect = QLabel("Aspect Ratio:")
+        self.combo_aspect = QComboBox()
+        self.combo_aspect.addItems(["Stretch", "Fit", "Crop", "Crop (Top)"])
+        # 저장된 aspect ratio 설정 로드
+        aspect_index = self.gui_state.get("aspect_ratio", 0)
+        self.combo_aspect.setCurrentIndex(aspect_index)
+        rotation_layout.addWidget(self.label_aspect)
+        rotation_layout.addWidget(self.combo_aspect)
+        
+        # --- Crop Offset 옵션 추가 ---
+        self.label_crop_offset = QLabel("Crop Offset:")
+        self.txt_crop_offset = QLineEdit()
+        self.txt_crop_offset.setFixedWidth(60)
+        self.txt_crop_offset.setPlaceholderText("0")
+        # 저장된 crop offset 설정 로드
+        crop_offset = self.gui_state.get("crop_offset", "0")
+        self.txt_crop_offset.setText(crop_offset)
+        # 값 변경 시 VideoThread에 반영
+        self.txt_crop_offset.textChanged.connect(self.update_crop_offset)
+        rotation_layout.addWidget(self.label_crop_offset)
+        rotation_layout.addWidget(self.txt_crop_offset)
+        
+        rotation_layout.addStretch()
+
         self.update_front_face_checkbox_states() # 초기 상태 설정
 
         self.label_source = QLabel("Video Source (0 for webcam):")
@@ -675,6 +851,7 @@ class MainApp(QWidget):
         self.label_weights = QLabel("YOLOv5 Weights:")
         self.txt_weights = QLineEdit(str(ROOT / 'weights' / 'best.pt'))
         self.txt_weights.setText(self.gui_state.get("weights", str(ROOT / 'weights' / 'best.pt')))
+        self.txt_weights.textChanged.connect(self.update_weights)
         self.btn_browse_weights = QPushButton("Browse")
         self.btn_browse_weights.clicked.connect(self.browse_weights)
 
@@ -707,6 +884,7 @@ class MainApp(QWidget):
 
         main_layout.addLayout(source_weights_layout)
         main_layout.addLayout(socket_layout)
+        main_layout.addLayout(rotation_layout)
         main_layout.addLayout(control_layout)
         main_layout.addLayout(video_layout)
 
@@ -766,7 +944,10 @@ class MainApp(QWidget):
             'is_set_openvino_front_face_mode': self.is_set_openvino_front_face_mode,
             'enable_socket_sending': self.chk_send_socket.isChecked(),
             'socket_ip': self.txt_socket_ip.text(),
-            'socket_port': int(self.txt_socket_port.text())
+            'socket_port': int(self.txt_socket_port.text()),
+            'video_rotation': self.combo_rotation.currentIndex(),
+            'aspect_ratio': self.combo_aspect.currentIndex(),
+            'crop_offset': self.txt_crop_offset.text()
         }
 
         self.thread = VideoThread(config_args)
@@ -811,21 +992,8 @@ class MainApp(QWidget):
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-
-        label_width = self.image_label.width()
-        label_height = self.image_label.height()
-
         pixmap = QPixmap.fromImage(convert_to_Qt_format)
-        
-        # Check if this is an image sequence (not video/webcam)
-        if hasattr(self, 'thread') and self.thread and hasattr(self.thread, 'is_image_sequence') and self.thread.is_image_sequence:
-            # For images, don't stretch - keep aspect ratio and fit within label
-            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        else:
-            # For video/webcam, use the original scaling behavior
-            scaled_pixmap = pixmap.scaled(label_width, label_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-
-        self.image_label.setPixmap(scaled_pixmap)
+        self.image_label.setPixmap(pixmap)
 
     def convert_cv_qt(self, cv_img):
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -1005,7 +1173,10 @@ class MainApp(QWidget):
             "is_set_dlib_front_face_mode": self.is_set_dlib_front_face_mode,
             "is_set_mediapipe_front_face_mode": self.is_set_mediapipe_front_face_mode,
             "is_set_openvino_front_face_mode": self.is_set_openvino_front_face_mode,
-            "is_calibration_mode": self.is_calibration_mode
+            "is_calibration_mode": self.is_calibration_mode,
+            "video_rotation": self.combo_rotation.currentIndex(),
+            "aspect_ratio": self.combo_aspect.currentIndex(),
+            "crop_offset": self.txt_crop_offset.text()
         }
         try:
             with open(GUI_STATE_FILE, 'w') as f:
@@ -1020,6 +1191,21 @@ class MainApp(QWidget):
         else:
             # ON 상태(해제): 기본
             self.btn_hand_off.setStyleSheet("")
+
+    def update_crop_offset(self):
+        """Crop offset 값이 변경될 때 VideoThread에 반영"""
+        try:
+            if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
+                crop_offset = int(self.txt_crop_offset.text())
+                self.thread.crop_offset = crop_offset
+        except ValueError:
+            # 숫자가 아닌 값이 입력된 경우 무시
+            pass
+
+    def update_weights(self):
+        """Weights 값이 변경될 때 VideoThread에 반영"""
+        if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
+            self.thread.weights = self.txt_weights.text()
 
 
 if __name__ == "__main__":
