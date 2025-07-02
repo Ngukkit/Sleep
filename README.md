@@ -43,6 +43,23 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
     - `Calibrate Front Face` 버튼으로 Dlib, MediaPipe, OpenVINO의 정면 기준점을 동시에 보정합니다.
 - **소켓 통신**: 분석 결과를 외부 C++ 서버로 전송하는 기능을 포함하며, GUI에서 활성화/비활성화할 수 있습니다.
 
+## 📝 v1.04 업데이트 내용
+
+- Crop/Aspect Ratio/Offset 기능 대폭 개선
+    - 영상의 세로/가로 비율에 따라 Stretch, Fit, Crop, Crop(Top) 등 다양한 표시 모드 지원
+    - Crop(Top) 및 Crop(중앙)에서 사용자가 crop offset(픽셀)을 직접 입력해 원하는 위치에서 crop 가능
+    - 모든 텍스트(상태, FPS 등)가 crop된 이미지 위에 정확히 표시되도록 구조 리팩토링
+    - 영상 crop은 VideoThread에서 먼저 적용, 텍스트는 crop된 이미지 위에 그림
+    - update_image에서는 QPixmap 변환만 수행
+    - mediapipe, dlib, yolo 등 모든 분석기에서 crop/offset 동작 일관성 보장
+- GUI 개선
+    - Aspect Ratio, Crop Offset 옵션 추가 및 상태 저장/복원
+    - Crop Offset 입력란 실시간 반영
+- 코드 리팩토링 및 안정성 향상
+    - crop/offset 관련 코드 구조 단순화 및 동기화
+    - 불필요한 중복 코드 제거
+    - 기타 안정성 개선 및 버그 수정
+
 ## 📝 v1.0 업데이트 내용
 
 ### 🎯 OpenVINO 분석기 추가
