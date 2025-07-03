@@ -268,6 +268,12 @@ class Visualizer:
         warning_color = (0, 0, 255) # 빨간색
         danger_color = (0, 0, 255) # 위험 상태용 빨간색
         
+        # ⭐ 운전자 없음 메시지 최우선 표시
+        if mp_display_results.get("is_driver_present") is False:
+            cv2.putText(image, "No driver detected", (text_x_offset, text_y_offset), font, font_scale+0.3, warning_color, 3)
+            text_y_offset += text_spacing
+            return image
+        
         # Danger/Warning 메시지 우선 표시 (제일 위)
         danger_y_offset = text_y_offset
         # 1. Danger: 눈감고 고개숙임
@@ -406,15 +412,15 @@ class Visualizer:
                 text_y_offset += text_spacing
 
             # 얼굴 가림 감지
-            if mp_display_results.get("is_eye_occluded_danger"):
-                cv2.putText(image, "Eyes Occluded!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += text_spacing
-            elif mp_display_results.get("is_mouth_occluded_as_yawn"):
-                cv2.putText(image, "Mouth Occluded (Yawn?)", (text_x_offset, text_y_offset), font, font_scale, color, 2)
-                text_y_offset += text_spacing
-            elif mp_display_results.get("is_face_occluded_by_hand"):
-                cv2.putText(image, "Face Occluded by Hand!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
-                text_y_offset += text_spacing
+            # if mp_display_results.get("is_eye_occluded_danger"):
+            #     cv2.putText(image, "Eyes Occluded!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+            #     text_y_offset += text_spacing
+            # elif mp_display_results.get("is_mouth_occluded_as_yawn"):
+            #     cv2.putText(image, "Mouth Occluded (Yawn?)", (text_x_offset, text_y_offset), font, font_scale, color, 2)
+            #     text_y_offset += text_spacing
+            # elif mp_display_results.get("is_face_occluded_by_hand"):
+            #     cv2.putText(image, "Face Occluded by Hand!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+            #     text_y_offset += text_spacing
                 
             # 기타 유용한 정보 표시 (선택 사항)
             # cv2.putText(image, f"EAR: {mp_display_results['mp_ear']:.2f}", (w - 150, 30), font, 0.7, (255, 255, 0), 1)
@@ -431,7 +437,7 @@ class Visualizer:
             mp_ear = mp_display_results.get("mp_ear", None)
             eye_blink_threshold = mp_display_results.get("eye_blink_threshold", None)
             if mp_ear is not None and eye_blink_threshold is not None:
-                ear_color = warning_color if mp_ear < eye_blink_threshold else color
+                ear_color = (0, 255, 0) if mp_ear < eye_blink_threshold else warning_color
                 cv2.putText(image, f"EAR: {mp_ear:.3f} (thresh: {eye_blink_threshold:.3f})", (text_x_offset, text_y_offset), font, font_scale, ear_color, 2)
                 text_y_offset += text_spacing
 

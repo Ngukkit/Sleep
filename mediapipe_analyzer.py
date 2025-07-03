@@ -149,6 +149,8 @@ class MediaPipeAnalyzer:
         self.distraction_frame_counter = 0  # Add distraction frame counter for consecutive detection
         self.drowsy_frame_count = 0
         self.distracted_frame_count = 0
+        self.driver_absent_frame_count = 0  # 운전자 미검출 연속 프레임 카운터
+        self.driver_absent_frame_threshold = 30  # 30프레임(약 1.5초) 연속 미검출 시 운전자 없음 표시
         # print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
 
     def close(self):
@@ -431,14 +433,17 @@ class MediaPipeAnalyzer:
         
         if face_mesh_results.multi_face_landmarks:
             face_landmarks = face_mesh_results.multi_face_landmarks[0]
-            
-            # Check if the detected face is within calibrated bounds
             frame_size = (frame.shape[0], frame.shape[1])
             if not self._is_face_within_calibrated_bounds(face_landmarks, frame_size):
-                # Face is outside calibrated bounds - treat as no face detected
+                self.driver_absent_frame_count += 1
+                if self.driver_absent_frame_count >= self.driver_absent_frame_threshold:
+                    results["is_driver_present"] = False
+                else:
+                    results["is_driver_present"] = True
                 results["is_distracted_no_face"] = True
                 return results
-            
+            self.driver_absent_frame_count = 0
+            results["is_driver_present"] = True
             results["face_landmarks"] = face_landmarks
             
             # --- Pupil-based Gaze Detection ---
@@ -561,7 +566,7 @@ class MediaPipeAnalyzer:
             # Euler 각도 계산
             yaw_val = np.arctan2(-rotation_matrix[2, 0], np.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2)) * 180 / np.pi * 2
             roll_val = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0]) * 180 / np.pi * 2
-            pitch_val = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2]) * 180 / np.pi * 2
+            pitch_val = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2]) * 180 / np.pi
             
             # 사용자 피드백 기반으로 yaw와 pitch를 스왑
             # 고개 숙이기(pitch)가 좌우 회전(yaw)으로, 좌우 회전이 고개 숙이기로 계산되는 문제 수정
@@ -642,12 +647,17 @@ class MediaPipeAnalyzer:
         
         if face_result and face_result.face_landmarks:
             results["face_landmarks"] = face_result.face_landmarks[0]
-            
             frame_size = (640, 480)  # Default frame size, should be passed from caller
-            # 캘리브레이션 직후 한 프레임만 얼굴 위치 필터링을 무시
             if not self.just_calibrated and not self._is_face_within_calibrated_bounds(face_result.face_landmarks[0], frame_size):
+                self.driver_absent_frame_count += 1
+                if self.driver_absent_frame_count >= self.driver_absent_frame_threshold:
+                    results["is_driver_present"] = False
+                else:
+                    results["is_driver_present"] = True
                 results["is_distracted_no_face"] = True
                 return results
+            self.driver_absent_frame_count = 0
+            results["is_driver_present"] = True
             
             # --- Pupil-based Gaze Detection ---
             pupil_gaze_deviated = self._calculate_pupil_gaze_deviation_v2(face_result.face_landmarks[0], frame_size)
