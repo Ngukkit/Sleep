@@ -4,7 +4,7 @@ import sys
 import os
 from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QCheckBox, QLabel, QLineEdit, QFileDialog, QMessageBox, QFrame, QComboBox, QGroupBox)
+                             QPushButton, QCheckBox, QLabel, QLineEdit, QFileDialog, QMessageBox, QFrame, QComboBox, QGroupBox, QSlider)
 from PyQt5.QtGui import QPixmap, QImage, QDragEnterEvent, QDropEvent, QMouseEvent, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 import numpy as np
@@ -687,6 +687,11 @@ class VideoThread(QThread):
         cropped = cv2.resize(cropped, (label_width, label_height), interpolation=cv2.INTER_LINEAR)
         return cropped
 
+    def set_playback_fps(self, fps):
+        """외부에서 재생 fps를 동적으로 변경"""
+        self.target_fps = max(5.0, min(60.0, fps))
+        self.frame_interval = 1.0 / self.target_fps
+
 
 class MainApp(QWidget):
     def __init__(self):
@@ -792,8 +797,10 @@ class MainApp(QWidget):
         socket_layout = QHBoxLayout()
         self.label_socket_ip = QLabel("Socket IP:")
         self.txt_socket_ip = QLineEdit(self.gui_state.get("socket_ip", "127.0.0.1"))
+        self.txt_socket_ip.textChanged.connect(self.save_socket_ip_port)
         self.label_socket_port = QLabel("Port:")
         self.txt_socket_port = QLineEdit(str(self.gui_state.get("socket_port", 5001)))
+        self.txt_socket_port.textChanged.connect(self.save_socket_ip_port)
         socket_layout.addWidget(self.label_socket_ip)
         socket_layout.addWidget(self.txt_socket_ip)
         socket_layout.addWidget(self.label_socket_port)
@@ -838,7 +845,25 @@ class MainApp(QWidget):
         rotation_layout.addWidget(self.label_crop_offset)
         rotation_layout.addWidget(self.txt_crop_offset)
         
-        rotation_layout.addStretch()
+        # --- Video Speed Slider 추가 ---
+        self.label_speed = QLabel("Playback Speed:")
+        self.slider_speed = QSlider(Qt.Horizontal)
+        self.slider_speed.setMinimum(-100)
+        self.slider_speed.setMaximum(100)
+        self.slider_speed.setValue(0)  # 0=기본속도
+        self.slider_speed.setTickInterval(10)
+        self.slider_speed.setTickPosition(QSlider.TicksBelow)
+        self.slider_speed.setFixedWidth(200)
+        self.label_speed_value = QLabel("1.0x")
+        self.slider_speed.valueChanged.connect(self.update_playback_speed)
+        # 슬라이더와 라벨을 layout에 추가
+        speed_layout = QHBoxLayout()
+        speed_layout.addWidget(self.label_speed)
+        speed_layout.addWidget(self.slider_speed)
+        speed_layout.addWidget(self.label_speed_value)
+        speed_layout.addStretch()
+        # rotation_layout 아래에 추가
+        main_layout.addLayout(speed_layout)
 
         self.update_front_face_checkbox_states() # 초기 상태 설정
 
@@ -957,6 +982,16 @@ class MainApp(QWidget):
         self.thread.set_mediapipe_front_face_mode = self.is_set_mediapipe_front_face_mode
         self.thread.set_openvino_front_face_mode = self.is_set_openvino_front_face_mode
 
+        # --- 재생 속도 슬라이더 값 반영 ---
+        v = self.slider_speed.value()
+        speed = 1.0 + (v / 100.0)
+        speed = max(0.5, min(2.0, speed))
+        base_fps = 20.0
+        new_fps = base_fps * speed
+        new_fps = max(5.0, min(60.0, new_fps))
+        self.thread.set_playback_fps(new_fps)
+        self.label_speed_value.setText(f"{speed:.2f}x")
+
         self.thread.start()
 
         self.btn_start.setEnabled(False)
@@ -1043,23 +1078,19 @@ class MainApp(QWidget):
                 self.thread.set_mediapipe_front_face_mode = False
                 self.thread.set_openvino_front_face_mode = False
 
-    def image_label_mouse_press_event(self, event: 'QMouseEvent'):
+    def image_label_mouse_press_event(self, ev: 'QMouseEvent'):
         """통합 캘리브레이션 모드에서 마우스 클릭 처리"""
         if not self.is_calibration_mode or not self.thread or not self.thread.isRunning():
-                return
-            
-        if event.button() == Qt.MouseButton.LeftButton:
+            return
+        if ev.button() == Qt.MouseButton.LeftButton:
             print("Mouse clicked to trigger calibration.")
-            
             # 활성화된 분석기에 따라 캘리브레이션 트리거 설정
             if self.chk_dlib.isChecked() and self.is_set_dlib_front_face_mode:
                 self.thread.dlib_calibration_trigger = True
                 print("Dlib calibration triggered.")
-        
             if self.chk_mediapipe.isChecked() and self.is_set_mediapipe_front_face_mode:
                 self.thread.mediapipe_calibration_trigger = True
                 print("MediaPipe calibration triggered.")
-                
             if self.chk_openvino.isChecked() and self.is_set_openvino_front_face_mode:
                 self.thread.openvino_calibration_trigger = True
                 print("OpenVINO calibration triggered.")
@@ -1206,6 +1237,28 @@ class MainApp(QWidget):
         """Weights 값이 변경될 때 VideoThread에 반영"""
         if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
             self.thread.weights = self.txt_weights.text()
+
+    def save_socket_ip_port(self):
+        self._save_gui_state()
+
+    def update_playback_speed(self):
+        """슬라이더 값이 바뀔 때 VideoThread의 재생 속도(fps) 반영"""
+        if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
+            v = self.slider_speed.value()
+            # -100~+100 -> 0.5x~2.0x (0=1.0x)
+            speed = 1.0 + (v / 100.0)
+            speed = max(0.5, min(2.0, speed))
+            # 기본 fps는 20, 0.5x=10fps, 2.0x=40fps
+            base_fps = 20.0
+            new_fps = base_fps * speed
+            new_fps = max(5.0, min(60.0, new_fps))
+            self.thread.set_playback_fps(new_fps)
+            self.label_speed_value.setText(f"{speed:.2f}x")
+        else:
+            v = self.slider_speed.value()
+            speed = 1.0 + (v / 100.0)
+            speed = max(0.5, min(2.0, speed))
+            self.label_speed_value.setText(f"{speed:.2f}x")
 
 
 if __name__ == "__main__":
