@@ -11,7 +11,7 @@
     "enable_mediapipe_hand": true,
     "enable_mediapipe_distracted": true,
     "enable_openvino": false,
-    "source": "/srv/shared/video/2025-07-03-094040.webm",
+    "source": "0",
     "weights": "/home/kkit/programming/python/sleep/weights/best.pt",
     "socket_ip": "127.0.0.1",
     "socket_port": 5001,

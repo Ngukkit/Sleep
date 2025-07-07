@@ -185,20 +185,25 @@ class MediaPipeAnalyzer:
             self.is_calibrated = True
             
             # --- Face Position and Size Calibration for Task API ---
-            # Calculate face center and size from landmarks
+            # Calculate face center and size from landmarks using nose as reference
             if hasattr(face_landmarks, 'landmark'):
                 # 기존 Face Mesh 방식
                 landmarks = face_landmarks.landmark
                 x_coords = [lm.x for lm in landmarks]
                 y_coords = [lm.y for lm in landmarks]
+                # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+                nose_x = landmarks[1].x * frame_size[1]
+                nose_y = landmarks[1].y * frame_size[0]
             else:
                 # Task API 방식 - 리스트 형태
                 x_coords = [lm.x for lm in face_landmarks]
                 y_coords = [lm.y for lm in face_landmarks]
+                # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+                nose_x = face_landmarks[1].x * frame_size[1]
+                nose_y = face_landmarks[1].y * frame_size[0]
             
-            face_center_x = np.mean(x_coords) * frame_size[1]
-            face_center_y = np.mean(y_coords) * frame_size[0]
-            self.calibrated_face_center = (face_center_x, face_center_y)
+            # 코를 중심으로 하는 얼굴 위치 저장
+            self.calibrated_face_center = (nose_x, nose_y)
             
             face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
             face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
@@ -207,13 +212,13 @@ class MediaPipeAnalyzer:
             # Calculate face ROI bounds with some margin
             margin_x = face_width * 0.2
             margin_y = face_height * 0.2
-            x1 = max(0, face_center_x - face_width/2 - margin_x)
-            y1 = max(0, face_center_y - face_height/2 - margin_y)
-            x2 = min(frame_size[1], face_center_x + face_width/2 + margin_x)
-            y2 = min(frame_size[0], face_center_y + face_height/2 + margin_y)
+            x1 = max(0, nose_x - face_width/2 - margin_x)
+            y1 = max(0, nose_y - face_height/2 - margin_y)
+            x2 = min(frame_size[1], nose_x + face_width/2 + margin_x)
+            y2 = min(frame_size[0], nose_y + face_height/2 + margin_y)
             self.calibrated_face_roi = (x1, y1, x2, y2)
             
-            print(f"[MediaPipeAnalyzer] Face position calibrated: center=({face_center_x:.1f}, {face_center_y:.1f}), "
+            print(f"[MediaPipeAnalyzer] Face position calibrated: center=({nose_x:.1f}, {nose_y:.1f}), "
                   f"size=({face_width:.1f}, {face_height:.1f})")
             
             # --- Pupil Position Calibration for Task API ---
@@ -236,14 +241,15 @@ class MediaPipeAnalyzer:
                 self.mp_front_face_offset_roll = -head_pose_data["roll"]
                 
                 # --- Face Position and Size Calibration for Face Mesh ---
-                # Calculate face center and size from landmarks
+                # Calculate face center and size from landmarks using nose as reference
                 landmarks = face_landmarks.landmark
                 x_coords = [lm.x for lm in landmarks]
                 y_coords = [lm.y for lm in landmarks]
                 
-                face_center_x = np.mean(x_coords) * frame_size[1]
-                face_center_y = np.mean(y_coords) * frame_size[0]
-                self.calibrated_face_center = (face_center_x, face_center_y)
+                # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+                nose_x = landmarks[1].x * frame_size[1]
+                nose_y = landmarks[1].y * frame_size[0]
+                self.calibrated_face_center = (nose_x, nose_y)
                 
                 face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
                 face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
@@ -252,13 +258,13 @@ class MediaPipeAnalyzer:
                 # Calculate face ROI bounds with some margin
                 margin_x = face_width * 0.2
                 margin_y = face_height * 0.2
-                x1 = max(0, face_center_x - face_width/2 - margin_x)
-                y1 = max(0, face_center_y - face_height/2 - margin_y)
-                x2 = min(frame_size[1], face_center_x + face_width/2 + margin_x)
-                y2 = min(frame_size[0], face_center_y + face_height/2 + margin_y)
+                x1 = max(0, nose_x - face_width/2 - margin_x)
+                y1 = max(0, nose_y - face_height/2 - margin_y)
+                x2 = min(frame_size[1], nose_x + face_width/2 + margin_x)
+                y2 = min(frame_size[0], nose_y + face_height/2 + margin_y)
                 self.calibrated_face_roi = (x1, y1, x2, y2)
                 
-                print(f"[MediaPipeAnalyzer] Face position calibrated: center=({face_center_x:.1f}, {face_center_y:.1f}), "
+                print(f"[MediaPipeAnalyzer] Face position calibrated: center=({nose_x:.1f}, {nose_y:.1f}), "
                       f"size=({face_width:.1f}, {face_height:.1f})")
                 
                 # --- Pupil Position Calibration for Face Mesh ---
@@ -1221,19 +1227,26 @@ class MediaPipeAnalyzer:
         if not self.is_calibrated or self.calibrated_face_center is None or self.calibrated_face_size is None:
             return True  # If not calibrated, accept all faces
         
-        # Calculate current face center and size
+        # Calculate current face center and size using nose as reference point
         if hasattr(face_landmarks, 'landmark'):
             # 기존 Face Mesh 방식
             landmarks = face_landmarks.landmark
             x_coords = [lm.x for lm in landmarks]
             y_coords = [lm.y for lm in landmarks]
+            # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+            nose_x = landmarks[1].x * frame_size[1]
+            nose_y = landmarks[1].y * frame_size[0]
         else:
             # Task API 방식 - 리스트 형태
             x_coords = [lm.x for lm in face_landmarks]
             y_coords = [lm.y for lm in face_landmarks]
+            # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+            nose_x = face_landmarks[1].x * frame_size[1]
+            nose_y = face_landmarks[1].y * frame_size[0]
         
-        current_face_center_x = np.mean(x_coords) * frame_size[1]
-        current_face_center_y = np.mean(y_coords) * frame_size[0]
+        # 코를 중심으로 하는 얼굴 크기 계산
+        current_face_center_x = nose_x
+        current_face_center_y = nose_y
         current_face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
         current_face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
         
