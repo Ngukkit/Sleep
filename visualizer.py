@@ -288,12 +288,27 @@ class Visualizer:
         if drowsy_frame_count >= wakeup_frame_threshold:
             cv2.putText(image, "Wake UP", (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
             danger_y_offset += text_spacing
-        # 3. Please look forward
-        distracted_frame_count = mp_display_results.get("distracted_frame_count", 0)
-        distracted_frame_threshold = mp_display_results.get("distracted_frame_threshold", 60)
-        if distracted_frame_count >= distracted_frame_threshold:
-            cv2.putText(image, "Please look forward", (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
+        
+        # 3. Please look forward (Distracted detection이 활성화된 경우에만 표시)
+        enable_distracted_detection = mp_display_results.get("enable_distracted_detection", True)
+        if enable_distracted_detection:
+            distracted_frame_count = mp_display_results.get("distracted_frame_count", 0)
+            distracted_frame_threshold = mp_display_results.get("distracted_frame_threshold", 60)
+            if distracted_frame_count >= distracted_frame_threshold:
+                cv2.putText(image, "Please look forward", (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
+                danger_y_offset += text_spacing
+        
+        # 4. Please hold the steering wheel (두 손이 60프레임 이상 연속 감지된 경우)
+        hand_detected_frame_count = mp_display_results.get("hand_detected_frame_count", 0)
+        hand_warning_frame_threshold = mp_display_results.get("hand_warning_frame_threshold", 60)
+        is_left_hand_off = mp_display_results.get("is_left_hand_off", False)
+        is_right_hand_off = mp_display_results.get("is_right_hand_off", False)
+        
+        # 두 손이 모두 감지되어 60프레임 이상 연속일 때만 경고 표시
+        if hand_detected_frame_count >= hand_warning_frame_threshold and is_left_hand_off and is_right_hand_off:
+            cv2.putText(image, "Please hold the steering wheel", (text_x_offset, danger_y_offset), font, font_scale+0.3, (0,0,255), 3)
             danger_y_offset += text_spacing
+
         # 이후 일반 상태 메시지는 danger_y_offset 이후에 표시
         text_y_offset = danger_y_offset
         
@@ -439,6 +454,16 @@ class Visualizer:
             if mp_ear is not None and eye_blink_threshold is not None:
                 ear_color = (0, 255, 0) if mp_ear < eye_blink_threshold else warning_color
                 cv2.putText(image, f"EAR: {mp_ear:.3f} (thresh: {eye_blink_threshold:.3f})", (text_x_offset, text_y_offset), font, font_scale, ear_color, 2)
+                text_y_offset += text_spacing
+
+            # ⭐ YAWN 값 표시 (EAR 바로 아래)
+            mar_value = mp_display_results.get("mar_value", None)
+            if mar_value is not None:
+                # config.json에서 jaw_open_threshold 값 가져오기
+                from config_manager import get_mediapipe_config
+                jaw_open_threshold = get_mediapipe_config("jaw_open_threshold", 0.4)
+                yawn_color = (0, 255, 255) if mar_value > jaw_open_threshold else (0, 255, 0)  # 노란색 if yawning, 초록색 if normal
+                cv2.putText(image, f"YAWN: {mar_value:.3f} (thresh: {jaw_open_threshold:.3f})", (text_x_offset, text_y_offset), font, font_scale, yawn_color, 2)
                 text_y_offset += text_spacing
 
         else:

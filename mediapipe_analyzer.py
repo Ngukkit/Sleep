@@ -53,7 +53,7 @@ WAKEUP_FRAME_THRESHOLD = get_mediapipe_config("wakeup_frame_threshold", 60)
 DISTRACTED_FRAME_THRESHOLD = get_mediapipe_config("distracted_frame_threshold", 60)
 
 class MediaPipeAnalyzer:
-    def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None, enable_hand_detection=True):
+    def __init__(self, running_mode=None, face_result_callback=None, hand_result_callback=None, enable_hand_detection=True, enable_distracted_detection=True):
         # GUI 호환성을 위해 기본값 설정
         if running_mode is None:
             running_mode = vision.RunningMode.VIDEO
@@ -62,6 +62,7 @@ class MediaPipeAnalyzer:
         self.face_result_callback = face_result_callback
         self.hand_result_callback = hand_result_callback
         self.enable_hand_detection = enable_hand_detection
+        self.enable_distracted_detection = enable_distracted_detection
 
         # 캘리브레이션 관련 변수들 (GUI 호환성)
         self.mp_front_face_offset_yaw = 0.0
@@ -81,6 +82,7 @@ class MediaPipeAnalyzer:
         self.face_position_threshold = get_mediapipe_config("face_position_threshold", 0.3)  # Maximum allowed deviation from calibrated position (as ratio of face size)
         self.face_size_threshold = get_mediapipe_config("face_size_threshold", 0.5)      # Maximum allowed size difference (as ratio)
         self.enable_face_position_filtering = get_mediapipe_config("enable_face_position_filtering", True)  # Enable/disable face position filtering
+        self.face_roi_scale = get_mediapipe_config("face_roi_scale", 1.5)  # Scale factor for face ROI detection area
 
         # --- Pupil-based Gaze Detection Variables ---
         self.calibrated_pupil_center = None  # (x, y) coordinates of calibrated pupil center
@@ -151,6 +153,10 @@ class MediaPipeAnalyzer:
         self.distracted_frame_count = 0
         self.driver_absent_frame_count = 0  # 운전자 미검출 연속 프레임 카운터
         self.driver_absent_frame_threshold = 30  # 30프레임(약 1.5초) 연속 미검출 시 운전자 없음 표시
+        
+        # 손 감지 연속 프레임 카운터 추가
+        self.hand_detected_frame_count = 0  # 손 감지 연속 프레임 카운터
+        self.hand_warning_frame_threshold = 60  # 60프레임 연속 손 감지 시 경고
         # print(f"[MediaPipeAnalyzer] Initialized in {running_mode.name} mode.")
 
     def close(self):
@@ -425,6 +431,7 @@ class MediaPipeAnalyzer:
             "is_pupil_gaze_deviated": False,
             "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection,
             "mp_head_pose_color": (100, 100, 100),  # Default grey color
+            "enable_distracted_detection": self.enable_distracted_detection
         }
         
         # BGR -> RGB 변환
@@ -434,6 +441,8 @@ class MediaPipeAnalyzer:
         if face_mesh_results.multi_face_landmarks:
             face_landmarks = face_mesh_results.multi_face_landmarks[0]
             frame_size = (frame.shape[0], frame.shape[1])
+            
+            # ROI 범위 체크
             if not self._is_face_within_calibrated_bounds(face_landmarks, frame_size):
                 self.driver_absent_frame_count += 1
                 if self.driver_absent_frame_count >= self.driver_absent_frame_threshold:
@@ -441,7 +450,11 @@ class MediaPipeAnalyzer:
                 else:
                     results["is_driver_present"] = True
                 results["is_distracted_no_face"] = True
+                # ROI 범위를 벗어난 얼굴은 랜드마크를 None으로 설정
+                results["face_landmarks"] = None
                 return results
+            
+            # ROI 범위 내의 얼굴만 처리
             self.driver_absent_frame_count = 0
             results["is_driver_present"] = True
             results["face_landmarks"] = face_landmarks
@@ -468,7 +481,7 @@ class MediaPipeAnalyzer:
                 results["mp_head_yaw_deg"] = current_yaw
                 results["mp_head_roll_deg"] = current_roll
                 
-                # Head pose color based on calibration status (similar to Dlib)
+                # Head pose color based on calibration status
                 if not self.is_calibrated:
                     results["mp_head_pose_color"] = (100, 100, 100)  # Grey if not calibrated
                     # 캘리브레이션 전에는 값을 0으로 설정
@@ -477,31 +490,35 @@ class MediaPipeAnalyzer:
                     results["mp_head_roll_deg"] = 0.0
                     results["is_head_down"] = False
                     results["is_head_up"] = False
+                    results["is_distracted_from_front"] = False
+                    results["mp_is_distracted_from_front"] = False
                 else:
-                    # 정면 이탈 감지 (운전 상황에 맞게 조정)
-                    if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                        abs(current_pitch) > MP_PITCH_THRESHOLD):
-                        results["is_distracted_from_front"] = True
-                        results["mp_is_distracted_from_front"] = True
-                        results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
-                        # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    # Distracted detection이 비활성화된 경우 검출하지 않음
+                    if not self.enable_distracted_detection:
+                        results["mp_head_pose_color"] = (100, 100, 100)  # Grey when disabled
+                        results["is_distracted_from_front"] = False
+                        results["mp_is_distracted_from_front"] = False
+                        results["is_look_ahead_warning"] = False
                     else:
+                        # 정면 이탈 감지
+                        if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                            abs(current_pitch) > MP_PITCH_THRESHOLD):
+                            results["is_distracted_from_front"] = True
+                            results["mp_is_distracted_from_front"] = True
+                            results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
+                        else:
                             results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
-                            # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
                     
-                    # 고개 숙임/들기 감지 (구분해서 감지)
+                    # 고개 숙임/들기 감지
                     if current_pitch > PITCH_DOWN_THRESHOLD:
                         results["is_head_down"] = True
                         results["is_head_up"] = False
-                        # print(f"[DEBUG] Head down detected: pitch={current_pitch:.1f}>({PITCH_DOWN_THRESHOLD})")
                     elif current_pitch < PITCH_UP_THRESHOLD:
                         results["is_head_up"] = True
                         results["is_head_down"] = False
-                        # print(f"[DEBUG] Head up detected: pitch={current_pitch:.1f}<({PITCH_UP_THRESHOLD})")
                     else:
                         results["is_head_down"] = False
                         results["is_head_up"] = False
-                        # print(f"[DEBUG] Head normal: {PITCH_UP_THRESHOLD}<=pitch={current_pitch:.1f}<={PITCH_DOWN_THRESHOLD}")
                 
                 # Gaze 계산 (간단한 방식)
                 # 눈동자 위치를 기반으로 gaze 계산
@@ -642,12 +659,15 @@ class MediaPipeAnalyzer:
             # 눈동자 기반 시선 감지 필드들
             "is_pupil_gaze_deviated": False,
             "pupil_gaze_deviation": 0.0,
-            "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection
+            "enable_pupil_gaze_detection": self.enable_pupil_gaze_detection,
+            "enable_distracted_detection": self.enable_distracted_detection
         }
         
         if face_result and face_result.face_landmarks:
-            results["face_landmarks"] = face_result.face_landmarks[0]
-            frame_size = (640, 480)  # Default frame size, should be passed from caller
+            # 실제 프레임 크기를 사용하도록 수정 (detect_sync에서 전달받은 프레임 크기 사용)
+            frame_size = getattr(self, 'current_frame_size', (640, 480))  # 기본값은 640x480
+            
+            # ROI 범위 체크
             if not self.just_calibrated and not self._is_face_within_calibrated_bounds(face_result.face_landmarks[0], frame_size):
                 self.driver_absent_frame_count += 1
                 if self.driver_absent_frame_count >= self.driver_absent_frame_threshold:
@@ -655,9 +675,14 @@ class MediaPipeAnalyzer:
                 else:
                     results["is_driver_present"] = True
                 results["is_distracted_no_face"] = True
+                # ROI 범위를 벗어난 얼굴은 랜드마크를 None으로 설정
+                results["face_landmarks"] = None
                 return results
+            
+            # ROI 범위 내의 얼굴만 처리
             self.driver_absent_frame_count = 0
             results["is_driver_present"] = True
+            results["face_landmarks"] = face_result.face_landmarks[0]
             
             # --- Pupil-based Gaze Detection ---
             pupil_gaze_deviated = self._calculate_pupil_gaze_deviation_v2(face_result.face_landmarks[0], frame_size)
@@ -879,15 +904,24 @@ class MediaPipeAnalyzer:
                     results["mp_head_roll_deg"] = 0.0
                     results["is_head_down"] = False
                     results["is_head_up"] = False
+                    results["is_distracted_from_front"] = False
+                    results["mp_is_distracted_from_front"] = False
                 else:
-                    # 정면 이탈 감지 (운전 상황에 맞게 조정)
-                    if (abs(current_yaw) > MP_YAW_THRESHOLD or
-                        abs(current_pitch) > MP_PITCH_THRESHOLD):
-                        results["is_distracted_from_front"] = True
-                        results["mp_is_distracted_from_front"] = True
-                        results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
-                        # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                    # Distracted detection이 비활성화된 경우 검출하지 않음
+                    if not self.enable_distracted_detection:
+                        results["mp_head_pose_color"] = (100, 100, 100)  # Grey when disabled
+                        results["is_distracted_from_front"] = False
+                        results["mp_is_distracted_from_front"] = False
+                        results["is_look_ahead_warning"] = False
                     else:
+                        # 정면 이탈 감지 (운전 상황에 맞게 조정)
+                        if (abs(current_yaw) > MP_YAW_THRESHOLD or
+                            abs(current_pitch) > MP_PITCH_THRESHOLD):
+                            results["is_distracted_from_front"] = True
+                            results["mp_is_distracted_from_front"] = True
+                            results["mp_head_pose_color"] = (0, 0, 255)  # Red for distracted
+                            # print(f"[DEBUG] Head pose deviated: yaw={abs(current_yaw):.1f}>({MP_YAW_THRESHOLD}), pitch={abs(current_pitch):.1f}>({MP_PITCH_THRESHOLD})")
+                        else:
                             results["mp_head_pose_color"] = (0, 255, 0)  # Green for normal
                             # print(f"[DEBUG] Head pose normal: yaw={abs(current_yaw):.1f}<={MP_YAW_THRESHOLD}, pitch={abs(current_pitch):.1f}<={MP_PITCH_THRESHOLD}")
                     
@@ -935,74 +969,88 @@ class MediaPipeAnalyzer:
             results["is_left_hand_off"] = False
             results["is_right_hand_off"] = False
             results["are_both_hands_on_wheel"] = True
-            return results
-        
-        results["is_left_hand_off"] = False
-        results["is_right_hand_off"] = False
-        
-        left_hand_detected = False
-        right_hand_detected = False
-
-        # 얼굴 랜드마크 가져오기 (크기 비교용)
-        face_landmarks = None
-        if face_result and face_result.face_landmarks:
-            face_landmarks = face_result.face_landmarks[0]
-
-        if hand_result and hand_result.hand_landmarks:
-            for i, handedness_list in enumerate(hand_result.handedness):
-                handedness, landmarks = (
-                    handedness_list[0].category_name,
-                    hand_result.hand_landmarks[i],
-                )
-                
-                # 손 크기 필터링 적용
-                if face_landmarks and self._should_ignore_hand(landmarks, face_landmarks):
-                    # 캘리브레이션된 경우에만 메시지 출력
-                    if self.is_calibrated:
-                        print(f"[MediaPipeAnalyzer] {handedness} hand ignored due to small size")
-                    continue
-                
-                if handedness == "Left":
-                    results["left_hand_landmarks"] = landmarks
-                    left_hand_detected = True
-                elif handedness == "Right":
-                    results["right_hand_landmarks"] = landmarks
-                    right_hand_detected = True
-        
-        # 손 감지 상태에 따른 경고 설정
-        if left_hand_detected and right_hand_detected:
-            # 두 손이 모두 감지됨 - 빨간색 경고
-            results["hand_status"] = "Two Hands Detected"
-            results["hand_warning_color"] = "red"
-            results["hand_warning_message"] = "HANDS OFF STEERING WHEEL!"
-            results["is_left_hand_off"] = True
-            results["is_right_hand_off"] = True
-            # 캘리브레이션된 경우에만 메시지 출력
-            if self.is_calibrated:
-                print("[MediaPipeAnalyzer] Two hands detected - RED WARNING")
-        elif left_hand_detected or right_hand_detected:
-            # 한 손만 감지됨 - 노란색 경고
-            results["hand_status"] = "One Hand Detected"
-            results["hand_warning_color"] = "yellow"
-            results["hand_warning_message"] = "Please Hold Steering Wheel"
-            if left_hand_detected:
-                results["is_left_hand_off"] = True
-            if right_hand_detected:
-                results["is_right_hand_off"] = True
-            # 캘리브레이션된 경우에만 메시지 출력
-            if self.is_calibrated:
-                print("[MediaPipeAnalyzer] One hand detected - YELLOW WARNING")
         else:
-            # 손이 감지되지 않음 - 정상 (녹색)
-            results["hand_status"] = "No Hands Detected"
-            results["hand_warning_color"] = "green"
-            results["hand_warning_message"] = "Hands on wheel"
-            # 캘리브레이션된 경우에만 메시지 출력
-            if self.is_calibrated:
-                print("[MediaPipeAnalyzer] No hands detected - NORMAL")
+            results["is_left_hand_off"] = False
+            results["is_right_hand_off"] = False
             
-        # This will be used by the visualizer
-        results["are_both_hands_on_wheel"] = not (results["is_left_hand_off"] or results["is_right_hand_off"])
+            left_hand_detected = False
+            right_hand_detected = False
+
+            # 얼굴 랜드마크 가져오기 (크기 비교용)
+            face_landmarks = None
+            if face_result and face_result.face_landmarks:
+                face_landmarks = face_result.face_landmarks[0]
+
+            if hand_result and hand_result.hand_landmarks:
+                for i, hand_landmarks in enumerate(hand_result.hand_landmarks):
+                    if len(hand_landmarks) > 0:
+                        # 손 크기 필터링 확인
+                        if not self._should_ignore_hand(hand_landmarks, face_landmarks):
+                            if i == 0:  # 첫 번째 손
+                                left_hand_detected = True
+                                results["left_hand_landmarks"] = hand_landmarks
+                            elif i == 1:  # 두 번째 손
+                                right_hand_detected = True
+                                results["right_hand_landmarks"] = hand_landmarks
+            
+            # 손 감지 상태에 따른 경고 설정 (로직 수정)
+            if left_hand_detected or right_hand_detected:
+                # 손이 감지됨
+                if left_hand_detected and right_hand_detected:
+                    # 두 손이 모두 감지됨 - 연속 프레임 카운터 증가
+                    self.hand_detected_frame_count += 1
+                    
+                    # 60프레임 이상 연속 두 손 감지 시 경고
+                    if self.hand_detected_frame_count >= self.hand_warning_frame_threshold:
+                        results["hand_status"] = "Both Hands Detected - WARNING!"
+                        results["hand_warning_color"] = "red"
+                        results["hand_warning_message"] = "Please hold the steering wheel!"
+                        results["is_left_hand_off"] = True
+                        results["is_right_hand_off"] = True
+                    else:
+                        # 60프레임 미만이면 정상 상태로 표시
+                        results["hand_status"] = "Both Hands Detected - GOOD"
+                        results["hand_warning_color"] = "green"
+                        results["hand_warning_message"] = "Hands on wheel - GOOD"
+                        results["is_left_hand_off"] = False
+                        results["is_right_hand_off"] = False
+                else:
+                    # 한 손만 감지됨 - 정상 상태로 표시하고 카운터 리셋
+                    self.hand_detected_frame_count = 0
+                    results["hand_status"] = "One Hand Detected - GOOD"
+                    results["hand_warning_color"] = "green"
+                    results["hand_warning_message"] = "Hands on wheel - GOOD"
+                    if left_hand_detected:
+                        results["is_left_hand_off"] = False
+                    if right_hand_detected:
+                        results["is_right_hand_off"] = False
+                
+                # 캘리브레이션된 경우에만 메시지 출력
+                if self.is_calibrated:
+                    if left_hand_detected and right_hand_detected:
+                        if self.hand_detected_frame_count >= self.hand_warning_frame_threshold:
+                            print("[MediaPipeAnalyzer] Both hands detected for 60+ frames - RED WARNING")
+                        else:
+                            print("[MediaPipeAnalyzer] Both hands detected - GREEN (GOOD)")
+                    else:
+                        print("[MediaPipeAnalyzer] One hand detected - GREEN (GOOD)")
+            else:
+                # 손이 감지되지 않음 - 연속 프레임 카운터 리셋
+                self.hand_detected_frame_count = 0
+                
+                # 손이 감지되지 않음 - 초록색 (정상)
+                results["hand_status"] = "No Hands Detected - GOOD"
+                results["hand_warning_color"] = "green"
+                results["hand_warning_message"] = "Hands on wheel - GOOD"
+                results["is_left_hand_off"] = False
+                results["is_right_hand_off"] = False
+                # 캘리브레이션된 경우에만 메시지 출력
+                if self.is_calibrated:
+                    print("[MediaPipeAnalyzer] No hands detected - GREEN (GOOD)")
+            
+            # 손 감지 연속 프레임 수를 결과에 추가
+            results["hand_detected_frame_count"] = self.hand_detected_frame_count
+            results["hand_warning_frame_threshold"] = self.hand_warning_frame_threshold
 
         if results["is_drowsy"]:
             self.drowsy_frame_count += 1
@@ -1021,6 +1069,9 @@ class MediaPipeAnalyzer:
     def detect_sync(self, frame):  # IMAGE, VIDEO 모드용 동기 함수
         if not self.use_task_api:
             return self._analyze_frame_traditional(frame)
+        
+        # 실제 프레임 크기를 저장하여 _process_results에서 사용
+        self.current_frame_size = (frame.shape[0], frame.shape[1])
             
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
@@ -1116,26 +1167,48 @@ class MediaPipeAnalyzer:
             return 0.0
 
     def _should_ignore_hand(self, hand_landmarks, face_landmarks):
-        """손 크기가 얼굴 크기의 2/3보다 작으면 무시할지 결정"""
+        """손 크기가 얼굴 크기의 2/3보다 작으면 무시할지 결정하고, 화면 하단 1/3 영역에 있는지 확인"""
         if not ENABLE_HAND_SIZE_FILTERING:
             return False
         
-        if not hand_landmarks or not face_landmarks:
+        if not hand_landmarks:
             return False
         
-        hand_area = self._calculate_hand_size(hand_landmarks)
-        face_area = self._calculate_face_size(face_landmarks)
+        # 손이 화면 하단 1/3 영역에 있는지 확인
+        if hasattr(hand_landmarks, 'landmark'):
+            landmarks = hand_landmarks.landmark
+            hand_points = [(landmarks[i].x, landmarks[i].y) for i in range(21)]
+        else:
+            landmarks = hand_landmarks
+            hand_points = [(landmarks[i].x, landmarks[i].y) for i in range(21)]
         
-        if face_area == 0.0:
-            return False
+        # 손의 중심점 계산
+        hand_center_x = np.mean([p[0] for p in hand_points])
+        hand_center_y = np.mean([p[1] for p in hand_points])
         
-        hand_face_ratio = hand_area / face_area
-        should_ignore = hand_face_ratio < HAND_SIZE_RATIO_THRESHOLD
+        # 화면 하단 1/3 영역 (y > 0.67)에 있는지 확인
+        if hand_center_y < 0.67:  # 정규화된 좌표에서 0.67 = 화면의 2/3 지점
+            if self.is_calibrated:
+                print(f"[MediaPipeAnalyzer] Hand ignored: outside bottom 1/3 area (y={hand_center_y:.3f} < 0.67)")
+            return True
         
-        if should_ignore and self.is_calibrated:
-            print(f"[MediaPipeAnalyzer] Hand ignored: ratio={hand_face_ratio:.3f} < {HAND_SIZE_RATIO_THRESHOLD}")
+        # 얼굴 랜드마크가 있는 경우 크기 비교도 수행
+        if face_landmarks:
+            hand_area = self._calculate_hand_size(hand_landmarks)
+            face_area = self._calculate_face_size(face_landmarks)
+            
+            if face_area == 0.0:
+                return False
+            
+            hand_face_ratio = hand_area / face_area
+            should_ignore = hand_face_ratio < HAND_SIZE_RATIO_THRESHOLD
+            
+            if should_ignore and self.is_calibrated:
+                print(f"[MediaPipeAnalyzer] Hand ignored: ratio={hand_face_ratio:.3f} < {HAND_SIZE_RATIO_THRESHOLD}")
+            
+            return should_ignore
         
-        return should_ignore
+        return False
 
     def _is_face_within_calibrated_bounds(self, face_landmarks, frame_size):
         """
@@ -1168,23 +1241,30 @@ class MediaPipeAnalyzer:
         calibrated_center_x, calibrated_center_y = self.calibrated_face_center
         calibrated_width, calibrated_height = self.calibrated_face_size
         
-        # Calculate position difference as ratio of face size
-        position_diff_x = abs(current_face_center_x - calibrated_center_x) / calibrated_width
-        position_diff_y = abs(current_face_center_y - calibrated_center_y) / calibrated_height
+        # 새로운 방식: 캘리브레이션된 얼굴 ROI의 config에서 설정된 배수로 detection 영역 설정
+        roi_width = calibrated_width * self.face_roi_scale
+        roi_height = calibrated_height * self.face_roi_scale
         
-        # Check size difference
-        size_diff_width = abs(current_face_width - calibrated_width) / calibrated_width
-        size_diff_height = abs(current_face_height - calibrated_height) / calibrated_height
+        # ROI의 경계 계산
+        roi_x1 = calibrated_center_x - roi_width / 2
+        roi_y1 = calibrated_center_y - roi_height / 2
+        roi_x2 = calibrated_center_x + roi_width / 2
+        roi_y2 = calibrated_center_y + roi_height / 2
         
-        # Check if within thresholds
-        position_ok = (position_diff_x < self.face_position_threshold and 
-                      position_diff_y < self.face_position_threshold)
-        size_ok = (size_diff_width < self.face_size_threshold and 
-                  size_diff_height < self.face_size_threshold)
+        # 현재 얼굴이 ROI 내에 있는지 확인
+        current_face_x1 = current_face_center_x - current_face_width / 2
+        current_face_y1 = current_face_center_y - current_face_height / 2
+        current_face_x2 = current_face_center_x + current_face_width / 2
+        current_face_y2 = current_face_center_y + current_face_height / 2
         
-        if not position_ok or not size_ok:
-            print(f"[MediaPipeAnalyzer] Face rejected - Position diff: ({position_diff_x:.2f}, {position_diff_y:.2f}), "
-                  f"Size diff: ({size_diff_width:.2f}, {size_diff_height:.2f})")
+        # 얼굴이 ROI와 겹치는지 확인
+        face_in_roi = (current_face_x1 < roi_x2 and current_face_x2 > roi_x1 and
+                      current_face_y1 < roi_y2 and current_face_y2 > roi_y1)
+        
+        if not face_in_roi:
+            print(f"[MediaPipeAnalyzer] Face rejected - outside ROI bounds")
+            print(f"[MediaPipeAnalyzer] ROI: ({roi_x1:.1f}, {roi_y1:.1f}) to ({roi_x2:.1f}, {roi_y2:.1f})")
+            print(f"[MediaPipeAnalyzer] Face: ({current_face_x1:.1f}, {current_face_y1:.1f}) to ({current_face_x2:.1f}, {current_face_y2:.1f})")
             return False
         
         return True

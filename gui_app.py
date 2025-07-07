@@ -217,6 +217,7 @@ class VideoThread(QThread):
 
         # Crop offset
         self._crop_offset = 0
+        self.requested_seek_frame = None  # 안전한 시킹 요청 변수 추가
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -364,7 +365,8 @@ class VideoThread(QThread):
                 running_mode=running_mode,
                 face_result_callback=self.on_face_result if running_mode == vision.RunningMode.LIVE_STREAM else None,
                 hand_result_callback=self.on_hand_result if running_mode == vision.RunningMode.LIVE_STREAM else None,
-                enable_hand_detection=self.config_args.get('enable_mediapipe_hand', True)
+                enable_hand_detection=self.config_args.get('enable_mediapipe_hand', True),
+                enable_distracted_detection=self.config_args.get('enable_mediapipe_distracted', True)
             )
         else: # MediaPipe가 비활성화된 경우 None으로 명시적 설정
             self.mediapipe_analyzer = None
@@ -388,20 +390,20 @@ class VideoThread(QThread):
                 print(f"[VideoThread] User selected rotation: {user_rotation} -> orientation: {self.exif_orientation}")
             
             # Original video/webcam processing
-            cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_V4L2)
-            if not cap.isOpened():
+            self.cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_V4L2)
+            if not self.cap.isOpened():
                 print(f"Attempting with CAP_V4L2 failed. Retrying with default. Error: Could not open video source {source}")
-                cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_GSTREAMER)
-                if not cap.isOpened():
+                self.cap = cv2.VideoCapture(int(source) if source.isdigit() else source, cv2.CAP_GSTREAMER)
+                if not self.cap.isOpened():
                     print(f"Attempting with CAP_GSTREAMER failed. Retrying with default. Error: Could not open video source {source}")
-                    cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
-                    if not cap.isOpened():
+                    self.cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+                    if not self.cap.isOpened():
                         print(f"Failed to open video source {source} with any specified backend.")
                         self.is_running = False
                         return
 
             prev_frame_time = 0
-            while self.is_running and cap.isOpened():
+            while self.is_running and self.cap.isOpened():
                 # --- FPS 제한 로직 ---
                 current_time = time.time()
                 if current_time - self.last_frame_time < self.frame_interval:
@@ -409,8 +411,18 @@ class VideoThread(QThread):
                     continue
                 
                 self.last_frame_time = current_time
-                
-                ret, frame = cap.read()
+
+                # --- 안전한 시킹 처리 ---
+                if self.requested_seek_frame is not None:
+                    total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    if total_frames > 0:
+                        target_frame = int((self.requested_seek_frame / 100.0) * total_frames)
+                        target_frame = max(0, min(target_frame, total_frames - 1))
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                        print(f"[VideoThread] Video position set to {self.requested_seek_frame}% (frame {target_frame}/{total_frames})")
+                    self.requested_seek_frame = None
+
+                ret, frame = self.cap.read()
                 if not ret:
                     print("End of stream or cannot read frame.")
                     break
@@ -426,7 +438,7 @@ class VideoThread(QThread):
                 self.process_frame(im0, frame_h, frame_w, enable_yolo, enable_dlib, enable_mediapipe, 
                                     enable_openvino, conf_thres, iou_thres, max_det, hide_labels, hide_conf)
 
-            cap.release()
+            self.cap.release()
             # print("[VideoThread] Video capture released.")
         
         self.is_running = False
@@ -692,12 +704,22 @@ class VideoThread(QThread):
         self.target_fps = max(5.0, min(60.0, fps))
         self.frame_interval = 1.0 / self.target_fps
 
+    def set_video_position(self, position_percent):
+        """외부에서 비디오 위치를 동적으로 변경 (0-100%)"""
+        self.requested_seek_frame = position_percent
+
 
 class MainApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Drowsiness Detection with YOLOv5 & Dlib & MediaPipe")
-        self.setGeometry(100, 100, 1000, 700)
+        
+        # GUI 상태 먼저 로드
+        self.gui_state = self._load_gui_state()
+        
+        # 저장된 창 크기 복원, 없으면 기본값 사용
+        window_geometry = self.gui_state.get("window_geometry", {"x": 100, "y": 100, "width": 1000, "height": 700})
+        self.setGeometry(window_geometry["x"], window_geometry["y"], window_geometry["width"], window_geometry["height"])
 
         self.video_thread = None
         self.is_set_dlib_front_face_mode = False 
@@ -707,9 +729,6 @@ class MainApp(QWidget):
         self.mediapipe_analyzer = None
         self.openvino_analyzer = None
         self.openvino_hybrid_analyzer = None  # OpenVINO 하이브리드 분석기 추가
-        
-        # GUI 상태 먼저 로드
-        self.gui_state = self._load_gui_state()
         
         # 소켓 전송용 IP/Port - 저장된 상태에서 로드
         self.socket_ip = self.gui_state.get("socket_ip", "127.0.0.1")
@@ -763,12 +782,20 @@ class MainApp(QWidget):
         self.chk_mediapipe.stateChanged.connect(self.update_front_face_checkbox_states)
 
         # --- Hand Off 토글 버튼 추가 ---
-        self.btn_hand_off = QPushButton("Hand Off")
+        self.btn_hand_off = QPushButton("Hand On")
         self.btn_hand_off.setCheckable(True)
-        # 버튼이 눌려있으면 hand detection OFF, 아니면 ON
-        self.btn_hand_off.setChecked(not self.gui_state.get("enable_mediapipe_hand", True))
+        # 버튼이 눌려있으면 hand detection ON, 아니면 OFF
+        self.btn_hand_off.setChecked(self.gui_state.get("enable_mediapipe_hand", True))
         self.update_hand_off_button_style()
         self.btn_hand_off.toggled.connect(self.update_hand_off_button_style)
+
+        # --- Distracted On 토글 버튼 추가 ---
+        self.btn_distracted_off = QPushButton("Distracted On")
+        self.btn_distracted_off.setCheckable(True)
+        # 버튼이 눌려있으면 distracted detection ON, 아니면 OFF
+        self.btn_distracted_off.setChecked(self.gui_state.get("enable_mediapipe_distracted", True))
+        self.update_distracted_off_button_style()
+        self.btn_distracted_off.toggled.connect(self.update_distracted_off_button_style)
 
         self.chk_openvino = QCheckBox("Enable OpenVINO")
         self.chk_openvino.setChecked(self.gui_state.get("enable_openvino", False))
@@ -844,23 +871,49 @@ class MainApp(QWidget):
         self.txt_crop_offset.textChanged.connect(self.update_crop_offset)
         rotation_layout.addWidget(self.label_crop_offset)
         rotation_layout.addWidget(self.txt_crop_offset)
+        rotation_layout.addStretch()  # 우측 공간 확보
+        rotation_layout.addWidget(self.btn_start)
+        rotation_layout.addWidget(self.btn_stop)
+        rotation_layout.addWidget(self.btn_next_image)
         
         # --- Video Speed Slider 추가 ---
         self.label_speed = QLabel("Playback Speed:")
         self.slider_speed = QSlider(Qt.Horizontal)
         self.slider_speed.setMinimum(-100)
         self.slider_speed.setMaximum(100)
-        self.slider_speed.setValue(0)  # 0=기본속도
+        # 저장된 playback speed 값 로드
+        saved_speed = self.gui_state.get("playback_speed", 0)
+        self.slider_speed.setValue(saved_speed)
         self.slider_speed.setTickInterval(10)
         self.slider_speed.setTickPosition(QSlider.TicksBelow)
         self.slider_speed.setFixedWidth(200)
-        self.label_speed_value = QLabel("1.0x")
+        # 저장된 값에 따라 speed 표시 라벨 업데이트
+        speed = 1.0 + (saved_speed / 100.0)
+        speed = max(0.5, min(2.0, speed))
+        self.label_speed_value = QLabel(f"{speed:.2f}x")
         self.slider_speed.valueChanged.connect(self.update_playback_speed)
-        # 슬라이더와 라벨을 layout에 추가
+        
+        # --- Video Position Slider 추가 ---
+        self.label_position = QLabel("Video Position:")
+        self.slider_position = QSlider(Qt.Horizontal)
+        self.slider_position.setMinimum(0)
+        self.slider_position.setMaximum(100)
+        self.slider_position.setValue(0)  # 0% = 시작 위치
+        self.slider_position.setTickInterval(10)
+        self.slider_position.setTickPosition(QSlider.TicksBelow)
+        self.slider_position.setFixedWidth(200)
+        self.label_position_value = QLabel("0%")
+        self.slider_position.valueChanged.connect(self.update_video_position)
+        
+        # 슬라이더들을 layout에 추가
         speed_layout = QHBoxLayout()
         speed_layout.addWidget(self.label_speed)
         speed_layout.addWidget(self.slider_speed)
         speed_layout.addWidget(self.label_speed_value)
+        speed_layout.addStretch()
+        speed_layout.addWidget(self.label_position)
+        speed_layout.addWidget(self.slider_position)
+        speed_layout.addWidget(self.label_position_value)
         speed_layout.addStretch()
         # rotation_layout 아래에 추가
         main_layout.addLayout(speed_layout)
@@ -880,23 +933,13 @@ class MainApp(QWidget):
         self.btn_browse_weights = QPushButton("Browse")
         self.btn_browse_weights.clicked.connect(self.browse_weights)
 
-        control_layout.addWidget(self.btn_start)
-        control_layout.addWidget(self.btn_stop)
-        control_layout.addWidget(self.btn_next_image)
-        
-        separator = QFrame()
-        separator.setFrameShape(QFrame.VLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        control_layout.addWidget(separator) 
-
         control_layout.addWidget(self.chk_yolo)
         control_layout.addWidget(self.chk_dlib)
+        control_layout.addWidget(self.chk_openvino)
         control_layout.addWidget(self.chk_mediapipe)
         control_layout.addWidget(self.btn_hand_off)
-        control_layout.addWidget(self.chk_openvino)
+        control_layout.addWidget(self.btn_distracted_off)
         control_layout.addWidget(self.btn_calibrate)
-        control_layout.addWidget(self.btn_config)
-        control_layout.addWidget(self.btn_reload_config)
         control_layout.addStretch()
 
         source_weights_layout = QHBoxLayout()
@@ -906,6 +949,9 @@ class MainApp(QWidget):
         source_weights_layout.addWidget(self.label_weights)
         source_weights_layout.addWidget(self.txt_weights)
         source_weights_layout.addWidget(self.btn_browse_weights)
+        source_weights_layout.addStretch()  # 우측 공간 확보
+        source_weights_layout.addWidget(self.btn_config)
+        source_weights_layout.addWidget(self.btn_reload_config)
 
         main_layout.addLayout(source_weights_layout)
         main_layout.addLayout(socket_layout)
@@ -943,6 +989,7 @@ class MainApp(QWidget):
         )
         # Hand Off 버튼 활성화/비활성화
         self.btn_hand_off.setEnabled(self.chk_mediapipe.isChecked())
+        self.btn_distracted_off.setEnabled(self.chk_mediapipe.isChecked())
         # 캘리브레이션 모드가 활성화되어 있는데 해당 분석기가 비활성화되면 캘리브레이션 모드도 해제
         if self.is_calibration_mode:
             if not (self.chk_dlib.isChecked() or 
@@ -961,7 +1008,8 @@ class MainApp(QWidget):
             'enable_yolo': self.chk_yolo.isChecked(),
             'enable_dlib': self.chk_dlib.isChecked(),
             'enable_mediapipe': self.chk_mediapipe.isChecked(),
-            'enable_mediapipe_hand': not self.btn_hand_off.isChecked(),
+            'enable_mediapipe_hand': self.btn_hand_off.isChecked(),
+            'enable_mediapipe_distracted': self.btn_distracted_off.isChecked(),
             'enable_openvino': self.chk_openvino.isChecked(),
             # ... (다른 모든 필요한 설정값들) ...
             'is_set_dlib_front_face_mode': self.is_set_dlib_front_face_mode,
@@ -1190,11 +1238,21 @@ class MainApp(QWidget):
             return {} # Return empty dict if file not found or invalid
 
     def _save_gui_state(self):
+        # 현재 창의 위치와 크기 가져오기
+        window_geometry = {
+            "x": self.geometry().x(),
+            "y": self.geometry().y(),
+            "width": self.geometry().width(),
+            "height": self.geometry().height()
+        }
+        
         state = {
+            "window_geometry": window_geometry,
             "enable_yolo": self.chk_yolo.isChecked(),
             "enable_dlib": self.chk_dlib.isChecked(),
             "enable_mediapipe": self.chk_mediapipe.isChecked(),
-            "enable_mediapipe_hand": not self.btn_hand_off.isChecked(),
+            "enable_mediapipe_hand": self.btn_hand_off.isChecked(),
+            "enable_mediapipe_distracted": self.btn_distracted_off.isChecked(),
             "enable_openvino": self.chk_openvino.isChecked(),
             "source": self.txt_source.text(),
             "weights": self.txt_weights.text(),
@@ -1204,10 +1262,11 @@ class MainApp(QWidget):
             "is_set_dlib_front_face_mode": self.is_set_dlib_front_face_mode,
             "is_set_mediapipe_front_face_mode": self.is_set_mediapipe_front_face_mode,
             "is_set_openvino_front_face_mode": self.is_set_openvino_front_face_mode,
-            "is_calibration_mode": self.is_calibration_mode,
+            "is_calibration_mode": False,  # 항상 OFF로 저장
             "video_rotation": self.combo_rotation.currentIndex(),
             "aspect_ratio": self.combo_aspect.currentIndex(),
-            "crop_offset": self.txt_crop_offset.text()
+            "crop_offset": self.txt_crop_offset.text(),
+            "playback_speed": self.slider_speed.value()
         }
         try:
             with open(GUI_STATE_FILE, 'w') as f:
@@ -1217,11 +1276,19 @@ class MainApp(QWidget):
 
     def update_hand_off_button_style(self):
         if self.btn_hand_off.isChecked():
-            # OFF 상태(눌림): 빨간색
-            self.btn_hand_off.setStyleSheet("background-color: #ff6b6b; color: white;")
+            # ON 상태(눌림): 초록색
+            self.btn_hand_off.setStyleSheet("background-color: #4CAF50; color: white;")
         else:
-            # ON 상태(해제): 기본
+            # OFF 상태(해제): 기본
             self.btn_hand_off.setStyleSheet("")
+
+    def update_distracted_off_button_style(self):
+        if self.btn_distracted_off.isChecked():
+            # ON 상태(눌림): 초록색
+            self.btn_distracted_off.setStyleSheet("background-color: #4CAF50; color: white;")
+        else:
+            # OFF 상태(해제): 기본
+            self.btn_distracted_off.setStyleSheet("")
 
     def update_crop_offset(self):
         """Crop offset 값이 변경될 때 VideoThread에 반영"""
@@ -1259,6 +1326,17 @@ class MainApp(QWidget):
             speed = 1.0 + (v / 100.0)
             speed = max(0.5, min(2.0, speed))
             self.label_speed_value.setText(f"{speed:.2f}x")
+
+    def update_video_position(self):
+        """비디오 위치 슬라이더 값이 바뀔 때 VideoThread에 반영"""
+        if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
+            position_percent = self.slider_position.value()
+            # VideoThread에 위치 변경 요청
+            self.thread.set_video_position(position_percent)
+            self.label_position_value.setText(f"{position_percent}%")
+        else:
+            position_percent = self.slider_position.value()
+            self.label_position_value.setText(f"{position_percent}%")
 
 
 if __name__ == "__main__":
