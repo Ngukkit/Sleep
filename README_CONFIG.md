@@ -50,40 +50,40 @@ config.json
 ```json
 {
   "mediapipe": {
-    "eye_blink_threshold": 0.35,
-    "eye_blink_threshold_head_up": 0.40,
-    "eye_blink_threshold_head_down": 0.40,
-    "head_up_threshold_for_eye": -10.0,
-    "head_down_threshold_for_eye": 8.0,
-    "jaw_open_threshold": 0.3,
-    "drowsy_consec_frames": 15,
-    "yawn_consec_frames": 15,
-    "pitch_down_threshold": 20,
-    "pitch_up_threshold": -60,
-    "pose_consec_frames": 20,
-    "gaze_vector_threshold": 0.5,
-    "mp_yaw_threshold": 40.0,
-    "mp_pitch_threshold": 30.0,
-    "mp_roll_threshold": 999.0,
-    "gaze_threshold": 0.5,
-    "distraction_consec_frames": 20,
-    "true_pitch_threshold": 10.0,
-    "head_rotation_threshold_for_gaze": 15.0,
-    "use_video_mode": true,
-    "min_hand_detection_confidence": 0.3,
-    "min_hand_presence_confidence": 0.3,
-    "hand_off_consec_frames": 5,
-    "hand_size_ratio_threshold": 0.85,
-    "enable_hand_size_filtering": true,
-    "face_position_threshold": 0.3,
-    "face_size_threshold": 0.5,
-    "enable_face_position_filtering": true,
-    "face_roi_scale": 1.0,
-    "enable_pupil_gaze_detection": true,
-    "pupil_gaze_threshold": 0.15,
-    "pupil_gaze_consec_frames": 10,
-    "wakeup_frame_threshold": 60,
-    "distracted_frame_threshold": 60
+    "eye_blink_threshold": 0.35,                  // 눈 깜빡임 임계값
+    "eye_blink_threshold_head_up": 0.40,          // 고개를 들었을 때 눈 깜빡임 임계값
+    "eye_blink_threshold_head_down": 0.40,        // 고개를 숙였을 때 눈 깜빡임 임계값
+    "head_up_threshold_for_eye": -10.0,           // 눈 감지용 고개 들기 임계값
+    "head_down_threshold_for_eye": 8.0,           // 눈 감지용 고개 숙임 임계값
+    "jaw_open_threshold": 0.3,                    // 하품(입 벌림) 임계값
+    "drowsy_consec_frames": 15,                   // 졸음 연속 프레임 수
+    "yawn_consec_frames": 15,                     // 하품 연속 프레임 수
+    "pitch_down_threshold": 20,                   // 고개 숙임 임계값
+    "pitch_up_threshold": -60,                    // 고개 들기 임계값
+    "pose_consec_frames": 20,                     // 자세(시선 등) 연속 프레임 수
+    "gaze_vector_threshold": 0.5,                 // 시선 벡터 임계값
+    "mp_yaw_threshold": 40.0,                     // MediaPipe Yaw(좌우) 임계값
+    "mp_pitch_threshold": 30.0,                   // MediaPipe Pitch(상하) 임계값
+    "mp_roll_threshold": 999.0,                   // MediaPipe Roll(기울기) 임계값
+    "gaze_threshold": 0.5,                        // 시선 이탈 임계값
+    "distraction_consec_frames": 20,              // 주의 이탈 연속 프레임 수
+    "true_pitch_threshold": 10.0,                 // 실제 pitch 임계값
+    "head_rotation_threshold_for_gaze": 15.0,     // 시선 감지용 고개 회전 임계값
+    "use_video_mode": true,                       // VIDEO 모드 사용 여부
+    "min_hand_detection_confidence": 0.3,         // 손 감지 최소 신뢰도
+    "min_hand_presence_confidence": 0.3,          // 손 존재 최소 신뢰도
+    "hand_off_consec_frames": 5,                  // 손 이탈 연속 프레임 수
+    "hand_size_ratio_threshold": 0.85,            // 손 크기/얼굴 크기 비율 임계값
+    "enable_hand_size_filtering": true,           // 손 크기 필터링 활성화
+    "face_position_threshold": 0.3,               // 얼굴 위치 편차 허용 임계값
+    "face_size_threshold": 0.5,                   // 얼굴 크기 차이 허용 임계값
+    "enable_face_position_filtering": true,       // 얼굴 위치 필터링 활성화 여부
+    "face_roi_scale": 1.0,                        // 얼굴 ROI 스케일 배수
+    "enable_pupil_gaze_detection": true,          // 눈동자 시선 감지 활성화
+    "pupil_gaze_threshold": 0.15,                 // 눈동자 시선 이탈 임계값
+    "pupil_gaze_consec_frames": 10,               // 눈동자 시선 이탈 연속 프레임 수
+    "wakeup_frame_threshold": 60,                 // 졸음 해제 연속 프레임 수
+    "distracted_frame_threshold": 60              // 주의 이탈 해제 연속 프레임 수
   }
 }
 ```
@@ -92,36 +92,36 @@ config.json
 ```json
 {
   "openvino": {
-    "ear_threshold": 0.2,
-    "mar_thresh_open": 0.4,
-    "mar_thresh_yawn": 0.5,
-    "eye_closed_consec_frames": 15,
-    "head_down_consec_frames": 5,
-    "yaw_threshold": 25.0,
-    "roll_threshold": 90.0,
-    "distraction_consec_frames": 20,
-    "mouth_ar_consec_frames": 30,
-    "head_pose_threshold": 12.0,
-    "frame_skip": 3,
-    "face_detection_cache_time": 0.15,
-    "target_fps": 20.0,
-    "max_frame_skip": 2,
-    "calibration_ear_ratio": 0.8,
-    "use_hybrid_mode": true,
-    "device": "CPU",
-    "conf_thres": 0.5,
-    "face_bbox_scale": 1.3,
-    "head_down_threshold": 0.11,
-    "head_up_threshold": 0.20,
-    "eye_open_frame_threshold": 5,
-    "jump_thresh": 6.0,
-    "var_thresh": 4.0,
-    "mouth_jump_thresh": 6.0,
-    "mouth_var_thresh": 4.0,
-    "gaze_threshold": 1.2,
-    "head_rotation_threshold_for_gaze": 30.0,
-    "enable_pupil_gaze_detection": true,
-    "look_ahead_consec_frames": 10
+    "ear_threshold": 0.2,                        // EAR(눈 감음) 임계값
+    "mar_thresh_open": 0.4,                      // MAR(입 벌림) 임계값
+    "mar_thresh_yawn": 0.5,                      // MAR(하품) 임계값
+    "eye_closed_consec_frames": 15,              // 눈 감음 연속 프레임 수
+    "head_down_consec_frames": 5,                // 고개 숙임 연속 프레임 수
+    "yaw_threshold": 25.0,                       // 고개 좌우 회전 임계값
+    "roll_threshold": 90.0,                      // 고개 기울기 임계값
+    "distraction_consec_frames": 20,             // 주의 이탈 연속 프레임 수
+    "mouth_ar_consec_frames": 30,                // 입 벌림 연속 프레임 수
+    "head_pose_threshold": 12.0,                 // head pose 임계값
+    "frame_skip": 3,                             // 프레임 스킵 수
+    "face_detection_cache_time": 0.15,           // 얼굴 검출 캐시 시간(초)
+    "target_fps": 20.0,                          // 목표 FPS
+    "max_frame_skip": 2,                         // 최대 프레임 스킵
+    "calibration_ear_ratio": 0.8,                // 캘리브레이션 EAR 비율
+    "use_hybrid_mode": true,                     // 하이브리드 모드 사용 여부
+    "device": "CPU",                            // 실행 디바이스(CPU/GPU)
+    "conf_thres": 0.5,                           // 얼굴 검출 신뢰도 임계값
+    "face_bbox_scale": 1.3,                      // 얼굴 bbox 스케일 배수
+    "head_down_threshold": 0.11,                 // 고개 숙임 임계값(입-턱 거리)
+    "head_up_threshold": 0.20,                   // 고개 들기 임계값(입-턱 거리)
+    "eye_open_frame_threshold": 5,               // 눈 열림 연속 프레임 수
+    "jump_thresh": 6.0,                          // 눈동자 jump 임계값
+    "var_thresh": 4.0,                           // 눈동자 분산 임계값
+    "mouth_jump_thresh": 6.0,                    // 입 jump 임계값
+    "mouth_var_thresh": 4.0,                     // 입 분산 임계값
+    "gaze_threshold": 1.2,                       // 시선 이탈 임계값
+    "head_rotation_threshold_for_gaze": 30.0,    // 시선 감지용 고개 회전 임계값
+    "enable_pupil_gaze_detection": true,         // 눈동자 시선 감지 활성화
+    "look_ahead_consec_frames": 10               // 정면 응시 연속 프레임 수
   }
 }
 ```
@@ -130,8 +130,8 @@ config.json
 ```json
 {
   "3ddfa": {
-    "eye_ar_thresh": 0.22,
-    "mouth_ar_thresh": 0.6
+    "eye_ar_thresh": 0.22,      // 눈 감음 임계값
+    "mouth_ar_thresh": 0.6      // 입 벌림 임계값
   }
 }
 ```
@@ -140,9 +140,9 @@ config.json
 ```json
 {
   "yolo": {
-    "default_conf_thres": 0.25,
-    "default_iou_thres": 0.45,
-    "default_max_det": 1000
+    "default_conf_thres": 0.25, // YOLO 기본 신뢰도 임계값
+    "default_iou_thres": 0.45,  // YOLO IOU 임계값
+    "default_max_det": 1000     // YOLO 최대 검출 개수
   }
 }
 ```
@@ -151,9 +151,9 @@ config.json
 ```json
 {
   "general": {
-    "fps_display": true,
-    "debug_mode": false,
-    "target_fps": 20.0
+    "fps_display": true,    // FPS 표시 여부
+    "debug_mode": false,    // 디버그 모드 활성화
+    "target_fps": 20.0      // 전체 목표 FPS
   }
 }
 ```

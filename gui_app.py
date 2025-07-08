@@ -716,6 +716,11 @@ class MainApp(QWidget):
         
         # GUI 상태 먼저 로드
         self.gui_state = self._load_gui_state()
+        # source가 파일일 경우 존재하지 않으면 0(웹캠)으로 대체
+        source = self.gui_state.get("source", "0")
+        if source not in ["0", 0] and not Path(source).exists():
+            print(f"[INFO] Saved source file '{source}' not found. Defaulting to webcam (0).")
+            self.gui_state["source"] = "0"
         
         # 저장된 창 크기 복원, 없으면 기본값 사용
         window_geometry = self.gui_state.get("window_geometry", {"x": 100, "y": 100, "width": 1000, "height": 700})
