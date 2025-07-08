@@ -9,22 +9,38 @@ config.json
 
 ## 🔧 설정 파일 구조
 
+### Headless(비-GUI) 실행 설정
+```json
+{
+  "headless": {
+    "enable_yolo": true,         // YOLOv5 분석 활성화
+    "enable_dlib": false,        // Dlib 분석 활성화
+    "enable_mediapipe": true,    // MediaPipe 분석 활성화
+    "enable_openvino": false,    // OpenVINO 분석 활성화
+    "socket_enabled": true,      // 소켓 전송 활성화
+    "socket_ip": "127.0.0.1",    // 소켓 서버 IP
+    "socket_port": 5001,         // 소켓 서버 포트
+    "source": 0                  // 입력 소스 (0=웹캠, 파일 경로 등)
+  }
+}
+```
+
 ### Dlib 설정
 ```json
 {
   "dlib": {
-    "eye_ar_thresh": 0.15,           // 눈 감음 임계값 (낮을수록 민감)
-    "eye_ar_consec_frames": 15,      // 눈 감음 연속 프레임 수
-    "eye_open_consec_frames": 5,     // 눈 열림 확인 연속 프레임 수
-    "mouth_ar_thresh": 0.4,          // 입 벌림 임계값 (높을수록 민감)
+    "eye_ar_thresh": 0.13,           // 눈 감음 임계값
+    "eye_ar_consec_frames": 20,      // 눈 감음 연속 프레임 수
+    "eye_open_consec_frames": 8,     // 눈 열림 확인 연속 프레임 수
+    "mouth_ar_thresh": 0.4,          // 입 벌림 임계값
     "mouth_ar_consec_frames": 30,    // 입 벌림 연속 프레임 수
-    "pitch_threshold": 15.0,         // 고개 상하 회전 임계값 (도)
-    "yaw_threshold": 60.0,           // 고개 좌우 회전 임계값 (도)
-    "roll_threshold": 90.0,          // 고개 기울기 임계값 (도)
-    "pitch_down_threshold": 10.0,    // 고개 숙임 즉시 감지 임계값 (도)
-    "distraction_consec_frames": 10, // 주의 이탈 연속 프레임 수
-    "face_position_threshold": 0.3,  // 얼굴 위치 편차 허용 임계값 (얼굴 크기 대비 비율)
-    "face_size_threshold": 0.5,      // 얼굴 크기 차이 허용 임계값 (비율)
+    "pitch_threshold": 12.0,         // 고개 상하 회전 임계값
+    "yaw_threshold": 40.0,           // 고개 좌우 회전 임계값
+    "roll_threshold": 90.0,          // 고개 기울기 임계값
+    "pitch_down_threshold": 8.0,     // 고개 숙임 임계값
+    "distraction_consec_frames": 15, // 주의 이탈 연속 프레임 수
+    "face_position_threshold": 0.5,  // 얼굴 위치 편차 허용 임계값
+    "face_size_threshold": 0.7,      // 얼굴 크기 차이 허용 임계값
     "enable_face_position_filtering": true  // 얼굴 위치 필터링 활성화 여부
   }
 }
@@ -34,37 +50,40 @@ config.json
 ```json
 {
   "mediapipe": {
-    "eye_blink_threshold": 0.3,      // 기본 눈 깜빡임 임계값 (정면)
-    "eye_blink_threshold_head_up": 0.2,    // 고개 들었을 때 눈 깜빡임 임계값 (더 관대)
-    "eye_blink_threshold_head_down": 0.25, // 고개 숙였을 때 눈 깜빡임 임계값 (중간)
-    "head_up_threshold_for_eye": -10.0,    // 고개 들음 판정 기준 (도)
-    "head_down_threshold_for_eye": 8.0,    // 고개 숙임 판정 기준 (도)
-    "jaw_open_threshold": 0.4,       // 턱 벌림 임계값
-    "drowsy_consec_frames": 15,      // 졸음 연속 프레임 수
-    "yawn_consec_frames": 30,        // 하품 연속 프레임 수
-    "pitch_down_threshold": 10,      // 고개 숙임 임계값
-    "pitch_up_threshold": -50,       // 고개 들기 임계값
-    "pose_consec_frames": 20,        // 자세 연속 프레임 수
-    "gaze_vector_threshold": 0.5,    // 시선 벡터 임계값
-    "mp_yaw_threshold": 45.0,        // MediaPipe 고개 좌우 회전 임계값
-    "mp_pitch_threshold": 10.0,      // MediaPipe 고개 상하 회전 임계값
-    "mp_roll_threshold": 999.0,      // MediaPipe 고개 기울기 임계값 (거의 무시)
-    "gaze_threshold": 0.5,           // 시선 이탈 임계값
-    "distraction_consec_frames": 10, // 주의 이탈 연속 프레임 수
-    "true_pitch_threshold": 10.0,    // 실제 고개 숙임 임계값
-    "head_rotation_threshold_for_gaze": 15.0,  // gaze 감지 비활성화 고개 회전 임계값
-    "use_video_mode": true,          // MediaPipe 실행 모드 (true: VIDEO, false: LIVE_STREAM)
-    "min_hand_detection_confidence": 0.3,      // 손 감지 최소 신뢰도
-    "min_hand_presence_confidence": 0.3,       // 손 존재 최소 신뢰도
-    "hand_off_consec_frames": 5,     // 손 이탈 연속 프레임 수
-    "hand_size_ratio_threshold": 0.67,         // 손/얼굴 크기 비율 임계값 (2/3)
-    "enable_hand_size_filtering": true,        // 손 크기 필터링 활성화 여부
-    "face_position_threshold": 0.3,            // 얼굴 위치 편차 허용 임계값 (얼굴 크기 대비 비율)
-    "face_size_threshold": 0.5,                // 얼굴 크기 차이 허용 임계값 (비율)
-    "enable_face_position_filtering": true,    // 얼굴 위치 필터링 활성화 여부
-    "enable_pupil_gaze_detection": true,       // 눈동자 기반 시선 감지 활성화 여부
-    "pupil_gaze_threshold": 0.05,              // 눈동자 시선 이탈 임계값 (얼굴 크기 대비 비율)
-    "pupil_gaze_consec_frames": 10             // 눈동자 시선 이탈 연속 프레임 수
+    "eye_blink_threshold": 0.35,
+    "eye_blink_threshold_head_up": 0.40,
+    "eye_blink_threshold_head_down": 0.40,
+    "head_up_threshold_for_eye": -10.0,
+    "head_down_threshold_for_eye": 8.0,
+    "jaw_open_threshold": 0.3,
+    "drowsy_consec_frames": 15,
+    "yawn_consec_frames": 15,
+    "pitch_down_threshold": 20,
+    "pitch_up_threshold": -60,
+    "pose_consec_frames": 20,
+    "gaze_vector_threshold": 0.5,
+    "mp_yaw_threshold": 40.0,
+    "mp_pitch_threshold": 30.0,
+    "mp_roll_threshold": 999.0,
+    "gaze_threshold": 0.5,
+    "distraction_consec_frames": 20,
+    "true_pitch_threshold": 10.0,
+    "head_rotation_threshold_for_gaze": 15.0,
+    "use_video_mode": true,
+    "min_hand_detection_confidence": 0.3,
+    "min_hand_presence_confidence": 0.3,
+    "hand_off_consec_frames": 5,
+    "hand_size_ratio_threshold": 0.85,
+    "enable_hand_size_filtering": true,
+    "face_position_threshold": 0.3,
+    "face_size_threshold": 0.5,
+    "enable_face_position_filtering": true,
+    "face_roi_scale": 1.0,
+    "enable_pupil_gaze_detection": true,
+    "pupil_gaze_threshold": 0.15,
+    "pupil_gaze_consec_frames": 10,
+    "wakeup_frame_threshold": 60,
+    "distracted_frame_threshold": 60
   }
 }
 ```
@@ -73,37 +92,36 @@ config.json
 ```json
 {
   "openvino": {
-    "ear_threshold": 0.2,            // EAR 임계값 (눈 감음 판정)
-    "mar_thresh_open": 0.4,          // MAR 임계값 (입 열림 판정)
-    "mar_thresh_yawn": 0.5,          // MAR 임계값 (하품 판정)
-    "eye_closed_consec_frames": 15,  // 눈 감음 연속 프레임 수
-    "pitch_down_threshold": 10.0,    // 고개 숙임 임계값 (도)
-    "head_down_consec_frames": 15,   // 고개 숙임 연속 프레임 수
-    "yaw_threshold": 25.0,           // 고개 좌우 회전 임계값 (도)
-    "roll_threshold": 25.0,          // 고개 기울기 임계값 (도)
-    "distraction_consec_frames": 20, // 주의 이탈 연속 프레임 수
-    "mouth_ar_consec_frames": 30,    // 입 벌림 연속 프레임 수
-    "head_pose_threshold": 12.0,     // 고개 자세 임계값 (도)
-    "frame_skip": 3,                 // 프레임 스킵 수
-    "face_detection_cache_time": 0.15, // 얼굴 감지 캐시 시간 (초)
-    "target_fps": 20.0,              // 목표 FPS
-    "max_frame_skip": 2,             // 최대 프레임 스킵 수
-    "calibration_ear_ratio": 0.8,    // 캘리브레이션 EAR 비율
-    "use_hybrid_mode": true,         // 하이브리드 모드 사용 여부
-    "device": "CPU",                 // 실행 디바이스 (CPU/GPU)
-    "conf_thres": 0.5,               // 얼굴 감지 신뢰도 임계값
-    "face_bbox_scale": 1.3,          // 얼굴 바운딩 박스 확장 비율
-    "head_down_threshold": 0.11,     // 입-턱 거리 기반 고개 숙임 임계값
-    "head_up_threshold": 0.22,       // 입-턱 거리 기반 고개 들기 임계값
-    "eye_open_frame_threshold": 5,   // 눈 열림 확인 프레임 수
-    "jump_thresh": 6.0,              // 눈동자 움직임 jump 임계값
-    "var_thresh": 4.0,               // 눈동자 움직임 variance 임계값
-    "mouth_jump_thresh": 6.0,        // 입 움직임 jump 임계값
-    "mouth_var_thresh": 4.0,         // 입 움직임 variance 임계값
-    "gaze_threshold": 1.2,           // 시선 감지 임계값
-    "head_rotation_threshold_for_gaze": 30.0,  // 시선 감지 비활성화 고개 회전 임계값 (도)
-    "enable_pupil_gaze_detection": true,       // 눈동자 시선 감지 활성화 여부
-    "look_ahead_consec_frames": 10   // 정면 응시 연속 프레임 수
+    "ear_threshold": 0.2,
+    "mar_thresh_open": 0.4,
+    "mar_thresh_yawn": 0.5,
+    "eye_closed_consec_frames": 15,
+    "head_down_consec_frames": 5,
+    "yaw_threshold": 25.0,
+    "roll_threshold": 90.0,
+    "distraction_consec_frames": 20,
+    "mouth_ar_consec_frames": 30,
+    "head_pose_threshold": 12.0,
+    "frame_skip": 3,
+    "face_detection_cache_time": 0.15,
+    "target_fps": 20.0,
+    "max_frame_skip": 2,
+    "calibration_ear_ratio": 0.8,
+    "use_hybrid_mode": true,
+    "device": "CPU",
+    "conf_thres": 0.5,
+    "face_bbox_scale": 1.3,
+    "head_down_threshold": 0.11,
+    "head_up_threshold": 0.20,
+    "eye_open_frame_threshold": 5,
+    "jump_thresh": 6.0,
+    "var_thresh": 4.0,
+    "mouth_jump_thresh": 6.0,
+    "mouth_var_thresh": 4.0,
+    "gaze_threshold": 1.2,
+    "head_rotation_threshold_for_gaze": 30.0,
+    "enable_pupil_gaze_detection": true,
+    "look_ahead_consec_frames": 10
   }
 }
 ```
@@ -112,8 +130,8 @@ config.json
 ```json
 {
   "3ddfa": {
-    "eye_ar_thresh": 0.22,           // 3DDFA 눈 감음 임계값
-    "mouth_ar_thresh": 0.6           // 3DDFA 입 벌림 임계값
+    "eye_ar_thresh": 0.22,
+    "mouth_ar_thresh": 0.6
   }
 }
 ```
@@ -122,9 +140,9 @@ config.json
 ```json
 {
   "yolo": {
-    "default_conf_thres": 0.25,      // 기본 신뢰도 임계값
-    "default_iou_thres": 0.45,       // 기본 IoU 임계값
-    "default_max_det": 1000          // 최대 감지 개수
+    "default_conf_thres": 0.25,
+    "default_iou_thres": 0.45,
+    "default_max_det": 1000
   }
 }
 ```
@@ -133,11 +151,16 @@ config.json
 ```json
 {
   "general": {
-    "fps_display": true,             // FPS 표시 여부
-    "debug_mode": false              // 디버그 모드 여부
+    "fps_display": true,
+    "debug_mode": false,
+    "target_fps": 20.0
   }
 }
 ```
+
+---
+
+(이하 기존 설명 및 팁은 실제 config.json 값에 맞게 유지/보완)
 
 ## 🎯 설정 수정 방법
 
@@ -267,7 +290,7 @@ OpenVINO는 기존의 EAR 대신 눈동자 움직임의 jump(최대-최소)와 v
 ### OpenVINO 입-턱 거리 기반 고개 자세 감지
 OpenVINO는 기존의 각도 기반 대신 입과 턱 사이의 거리를 측정하여 고개 숙임/들기를 감지합니다:
 - **고개 숙임 임계값**: `head_down_threshold: 0.11` (입-턱 거리가 얼굴 대각선의 11% 이하)
-- **고개 들기 임계값**: `head_up_threshold: 0.22` (입-턱 거리가 얼굴 대각선의 22% 이상)
+- **고개 들기 임계값**: `head_up_threshold: 0.20` (입-턱 거리가 얼굴 대각선의 22% 이상)
 - **연속 프레임**: `head_down_consec_frames: 15` (15프레임 연속 감지 시 고개 숙임 판정)
 
 **작동 원리**:
