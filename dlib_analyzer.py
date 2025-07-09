@@ -351,14 +351,9 @@ class DlibAnalyzer:
             # Update previous head down state
             self.is_head_down_previous = is_head_down_current
             
-            # Determine eye threshold - use relative if calibrated, otherwise absolute
-            if self.calibrated_ear is not None:
-                # Use relative threshold based on calibrated EAR
-                current_eye_thresh = self.calibrated_ear * self.ear_threshold_ratio
-            else:
-                # Fall back to absolute threshold if not calibrated
-                current_eye_thresh = EYE_AR_THRESH
-            
+            # Determine eye threshold - 항상 절대값(EYE_AR_THRESH)만 사용 (캘리브레이션 무시)
+            current_eye_thresh = EYE_AR_THRESH
+
             # Eye state detection with head down consideration
             if ear < current_eye_thresh:
                 # Eyes appear closed
