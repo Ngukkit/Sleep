@@ -337,6 +337,13 @@ class DlibAnalyzer:
             }
             results["head_pose_color"] = (0, 255, 0) # Green by default
 
+            # --- Add calibrated (adjusted) pitch for display ---
+            if self.is_calibrated:
+                adjusted_pitch = pitch + self.front_face_offset_pitch
+                results["adjusted_pitch_degree"] = adjusted_pitch
+            else:
+                results["adjusted_pitch_degree"] = pitch
+
             # Eye Aspect Ratio with relative detection
             left_ear = calculate_ear(shape[self.left_eye])
             right_ear = calculate_ear(shape[self.right_eye])

@@ -527,3 +527,401 @@ def is_looking_ahead_35(landmarks_35, landmarks_5=None, calibrated_landmarks_35=
     except Exception as e:
         print(f"[detector_utils] Looking ahead detection failed: {e}")
         return "Gaze: OFF", False, {} 
+
+# ============================================================================
+# MediaPipe 관련 계산 함수들
+# ============================================================================
+
+def get_mediapipe_head_pose_from_landmarks(frame_size, face_landmarks):
+    """
+    MediaPipe Face Mesh에서 head pose 계산 (기존 방식과 호환)
+    
+    Args:
+        frame_size: (height, width) 튜플
+        face_landmarks: MediaPipe Face Mesh 랜드마크 (Task API 또는 Face Mesh 방식)
+    
+    Returns:
+        dict: head pose 정보 또는 None (실패 시)
+    """
+    try:
+        # Task API와 기존 방식 모두 지원하도록 랜드마크 처리
+        if hasattr(face_landmarks, 'landmark'):
+            # 기존 Face Mesh 방식
+            landmarks = np.array([[lm.x * frame_size[1], lm.y * frame_size[0], lm.z] for lm in face_landmarks.landmark])
+        else:
+            # Task API 방식 - 리스트 형태
+            landmarks = np.array([[lm.x * frame_size[1], lm.y * frame_size[0], lm.z] for lm in face_landmarks])
+        
+        # 필요한 랜드마크 인덱스들이 존재하는지 확인
+        required_indices = [1, 152, 33, 263, 61, 291]  # nose, chin, left_eye, right_eye, left_mouth, right_mouth
+        if len(landmarks) < max(required_indices) + 1:
+            print(f"[detector_utils] Not enough landmarks: {len(landmarks)} < {max(required_indices) + 1}")
+            return None
+        
+        # 얼굴의 주요 포인트들
+        nose = landmarks[1]
+        left_eye = landmarks[33]
+        right_eye = landmarks[263]
+        left_mouth = landmarks[61]
+        right_mouth = landmarks[291]
+        
+        # 얼굴 중심점
+        face_center = np.mean([left_eye, right_eye, left_mouth, right_mouth], axis=0)
+        
+        # 카메라 내부 파라미터 (대략적인 값)
+        focal_length = frame_size[1]
+        center = (frame_size[1] / 2, frame_size[0] / 2)
+        camera_matrix = np.array([
+            [focal_length, 0, center[0]],
+            [0, focal_length, center[1]],
+            [0, 0, 1]
+        ], dtype=np.float64)
+        
+        # Distortion coefficients
+        dist_coeffs = np.zeros((4, 1))
+        
+        # 3D 모델 포인트들 (얼굴의 3D 좌표)
+        model_points = np.array([
+            (0.0, 0.0, 0.0),             # Nose tip
+            (0.0, -330.0, -65.0),        # Chin
+            (-225.0, 170.0, -135.0),     # Left eye left corner
+            (225.0, 170.0, -135.0),      # Right eye right corner
+            (-150.0, -150.0, -125.0),    # Left mouth corner
+            (150.0, -150.0, -125.0)      # Right mouth corner
+        ], dtype=np.float64)
+        
+        # 2D 이미지 포인트들 (x, y 좌표만)
+        image_points = np.array([
+            [landmarks[1][0], landmarks[1][1]],    # Nose tip
+            [landmarks[152][0], landmarks[152][1]],  # Chin
+            [landmarks[33][0], landmarks[33][1]],   # Left eye left corner
+            [landmarks[263][0], landmarks[263][1]],  # Right eye right corner
+            [landmarks[61][0], landmarks[61][1]],   # Left mouth corner
+            [landmarks[291][0], landmarks[291][1]]   # Right mouth corner
+        ], dtype=np.float64)
+        
+        # 포인트 개수와 형식 검증
+        if image_points.shape[0] < 4:
+            print(f"[detector_utils] Not enough image points: {image_points.shape[0]} < 4")
+            return None
+        
+        # PnP 문제 해결
+        success, rotation_vec, translation_vec = cv2.solvePnP(
+            model_points, image_points, camera_matrix, dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE
+        )
+        
+        if success:
+            # 회전 벡터를 회전 행렬로 변환
+            rotation_mat, _ = cv2.Rodrigues(rotation_vec)
+            
+            # Euler 각도 계산
+            pitch_val = np.arctan2(-rotation_mat[2, 0], np.sqrt(rotation_mat[2, 1]**2 + rotation_mat[2, 2]**2)) * 180 / np.pi
+            yaw_val = np.arctan2(rotation_mat[1, 0], rotation_mat[0, 0]) * 180 / np.pi
+            roll_val = np.arctan2(rotation_mat[2, 1], rotation_mat[2, 2]) * 180 / np.pi
+
+            # 사용자 피드백 기반으로 yaw와 pitch를 스왑
+            # 고개 숙이기(pitch)가 좌우 회전(yaw)으로, 좌우 회전이 고개 숙이기로 계산되는 문제 수정
+            pitch = yaw_val
+            yaw = pitch_val
+            roll = roll_val
+            
+            # Roll 각도를 -180~180도 범위로 정규화
+            if roll > 180:
+                roll -= 360
+            elif roll < -180:
+                roll += 360
+            
+            return {
+                "pitch": pitch,
+                "yaw": yaw,
+                "roll": roll,
+                "rotation_mat": rotation_mat,
+                "translation_vec": translation_vec
+            }
+    except Exception as e:
+        print(f"[detector_utils] MediaPipe head pose calculation error: {e}")
+    
+    return None
+
+def get_mediapipe_head_pose_from_matrix(transformation_matrix):
+    """
+    Task API의 transformation_matrix에서 head pose 계산
+    
+    Args:
+        transformation_matrix: MediaPipe Task API의 facial transformation matrix
+    
+    Returns:
+        tuple: (pitch, yaw, roll) 각도 (도 단위)
+    """
+    # 회전 행렬 추출
+    rotation_matrix = transformation_matrix[0:3, 0:3]
+    
+    try:
+        # Euler 각도 계산
+        yaw_val = np.arctan2(-rotation_matrix[2, 0], np.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2)) * 180 / np.pi * 2
+        roll_val = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0]) * 180 / np.pi * 2
+        pitch_val = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2]) * 180 / np.pi
+        
+        # 사용자 피드백 기반으로 yaw와 pitch를 스왑
+        # 고개 숙이기(pitch)가 좌우 회전(yaw)으로, 좌우 회전이 고개 숙이기로 계산되는 문제 수정
+        pitch = pitch_val
+        yaw = yaw_val
+        roll = roll_val
+        
+        # Roll 각도를 -180~180도 범위로 정규화
+        if roll > 180:
+            roll -= 360
+        elif roll < -180:
+            roll += 360
+
+        return pitch, yaw, roll
+    except Exception as e:
+        print(f"[detector_utils] Error calculating head pose from matrix: {e}")
+        return 0, 0, 0
+
+def get_mediapipe_true_pitch_from_landmarks(landmarks):
+    """
+    MediaPipe 랜드마크에서 true pitch 계산 (이마-턱 벡터 기반)
+    
+    Args:
+        landmarks: MediaPipe 랜드마크 (Task API는 리스트, FaceMesh는 .landmark)
+    
+    Returns:
+        float: true pitch 각도 (도 단위)
+    """
+    if hasattr(landmarks, 'landmark'):
+        lm = landmarks.landmark
+    else:
+        lm = landmarks
+    
+    try:
+        # 이마와 턱을 연결하는 벡터로 고개 숙임 계산
+        # 이마: 랜드마크 10번 (이마 중앙)
+        # 턱: 랜드마크 152번 (턱 중앙)
+        forehead = np.array([lm[10].x, lm[10].y, lm[10].z])
+        chin = np.array([lm[152].x, lm[152].y, lm[152].z])
+        
+        # 이마-턱 벡터 계산
+        face_vec = chin - forehead
+        face_vec_normalized = face_vec / np.linalg.norm(face_vec)
+        
+        # 수직 벡터 (y축)와의 각도 계산
+        vertical_vec = np.array([0, 1, 0])  # y축 (위쪽 방향)
+        
+        # 두 벡터 사이의 각도 계산
+        dot_product = np.clip(np.dot(face_vec_normalized, vertical_vec), -1.0, 1.0)
+        angle_rad = np.arccos(dot_product)
+        angle_deg = np.degrees(angle_rad)
+        
+        # 고개 숙임/들기 방향 결정
+        # face_vec의 y성분이 양수면 고개를 숙인 것, 음수면 고개를 든 것
+        if face_vec[1] > 0:
+            pitch_deg = angle_deg  # 고개 숙임 (양수)
+        else:
+            pitch_deg = -angle_deg  # 고개 들기 (음수)
+        
+        return pitch_deg
+    except Exception as e:
+        print(f"[detector_utils] True pitch calculation failed: {e}")
+        return 0.0
+
+def get_mediapipe_pupil_center(face_landmarks):
+    """
+    MediaPipe 랜드마크에서 양쪽 눈동자의 중심점 계산
+    
+    Args:
+        face_landmarks: MediaPipe Face Mesh 랜드마크
+    
+    Returns:
+        tuple: (x, y) 정규화된 좌표 또는 None (실패 시)
+    """
+    try:
+        if hasattr(face_landmarks, 'landmark'):
+            # 기존 Face Mesh 방식
+            landmarks = face_landmarks.landmark
+            # MediaPipe Face Mesh의 눈동자 랜드마크 인덱스
+            left_pupil = np.array([landmarks[468].x, landmarks[468].y])   # 왼쪽 눈동자 중심
+            right_pupil = np.array([landmarks[473].x, landmarks[473].y])  # 오른쪽 눈동자 중심
+        else:
+            # Task API 방식 - 리스트 형태
+            landmarks = face_landmarks
+            left_pupil = np.array([landmarks[468].x, landmarks[468].y])
+            right_pupil = np.array([landmarks[473].x, landmarks[473].y])
+        
+        # 양쪽 눈동자의 중심점 계산
+        pupil_center = (left_pupil + right_pupil) / 2
+        return pupil_center
+        
+    except Exception as e:
+        print(f"[detector_utils] Error calculating pupil center: {e}")
+        return None
+
+def calculate_mediapipe_pupil_gaze_deviation(face_landmarks, frame_size, calibrated_pupil_center, 
+                                           pupil_gaze_threshold=0.05, pupil_gaze_consec_frames=10):
+    """
+    MediaPipe 랜드마크에서 눈동자 기반 시선 이탈 계산
+    
+    Args:
+        face_landmarks: MediaPipe Face Mesh 랜드마크
+        frame_size: (height, width) 튜플
+        calibrated_pupil_center: 캘리브레이션된 눈동자 중심점
+        pupil_gaze_threshold: 시선 이탈 임계값
+        pupil_gaze_consec_frames: 연속 프레임 임계값
+    
+    Returns:
+        bool: 시선 이탈 여부
+    """
+    if calibrated_pupil_center is None:
+        return False
+    
+    current_pupil_center = get_mediapipe_pupil_center(face_landmarks)
+    if current_pupil_center is None:
+        return False
+    
+    # 캘리브레이션 시 설정된 가상의 정면 점 (화면 중앙)
+    virtual_front_point = np.array([0.5, 0.5])  # 정규화된 좌표 (화면 중앙)
+    
+    # 현재 눈동자 중심과 가상 정면 점의 거리 계산
+    deviation_from_front = np.linalg.norm(current_pupil_center - virtual_front_point)
+    
+    # 캘리브레이션 시 눈동자가 정면을 바라볼 때의 거리 (기준 거리)
+    calibrated_deviation_from_front = np.linalg.norm(calibrated_pupil_center - virtual_front_point)
+    
+    # 현재 거리와 캘리브레이션 시 거리의 차이
+    deviation_diff = abs(deviation_from_front - calibrated_deviation_from_front)
+    
+    # 얼굴 크기 대비 정규화된 거리 계산
+    if hasattr(face_landmarks, 'landmark'):
+        landmarks = face_landmarks.landmark
+        x_coords = [lm.x for lm in landmarks]
+        y_coords = [lm.y for lm in landmarks]
+    else:
+        landmarks = face_landmarks
+        x_coords = [lm.x for lm in landmarks]
+        y_coords = [lm.y for lm in landmarks]
+    
+    face_width = (max(x_coords) - min(x_coords))
+    face_height = (max(y_coords) - min(y_coords))
+    face_size = max(face_width, face_height)  # 얼굴 크기 (정규화된 좌표)
+    
+    # 얼굴 크기 대비 정규화된 거리 차이
+    normalized_deviation = deviation_diff / face_size
+    
+    # 연속 프레임 카운터는 호출하는 쪽에서 관리
+    is_deviated = normalized_deviation > pupil_gaze_threshold
+    
+    if is_deviated:
+        print(f"[detector_utils] Pupil gaze deviated: deviation={normalized_deviation:.3f} > {pupil_gaze_threshold}")
+    
+    return is_deviated
+
+def calculate_mediapipe_face_center_and_size(face_landmarks, frame_size):
+    """
+    MediaPipe 랜드마크에서 얼굴 중심점과 크기 계산
+    
+    Args:
+        face_landmarks: MediaPipe Face Mesh 랜드마크
+        frame_size: (height, width) 튜플
+    
+    Returns:
+        tuple: (face_center, face_size, face_roi) 또는 None (실패 시)
+    """
+    try:
+        if hasattr(face_landmarks, 'landmark'):
+            # 기존 Face Mesh 방식
+            landmarks = face_landmarks.landmark
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+            # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+            nose_x = landmarks[1].x * frame_size[1]
+            nose_y = landmarks[1].y * frame_size[0]
+        else:
+            # Task API 방식 - 리스트 형태
+            landmarks = face_landmarks
+            x_coords = [lm.x for lm in landmarks]
+            y_coords = [lm.y for lm in landmarks]
+            # 코 위치를 기준점으로 사용 (랜드마크 인덱스 1이 코)
+            nose_x = landmarks[1].x * frame_size[1]
+            nose_y = landmarks[1].y * frame_size[0]
+        
+        # 코를 중심으로 하는 얼굴 위치 저장
+        face_center = (nose_x, nose_y)
+        
+        face_width = (max(x_coords) - min(x_coords)) * frame_size[1]
+        face_height = (max(y_coords) - min(y_coords)) * frame_size[0]
+        face_size = (face_width, face_height)
+        
+        # Calculate face ROI bounds with some margin
+        margin_x = face_width * 0.2
+        margin_y = face_height * 0.2
+        x1 = max(0, nose_x - face_width/2 - margin_x)
+        y1 = max(0, nose_y - face_height/2 - margin_y)
+        x2 = min(frame_size[1], nose_x + face_width/2 + margin_x)
+        y2 = min(frame_size[0], nose_y + face_height/2 + margin_y)
+        face_roi = (x1, y1, x2, y2)
+        
+        return face_center, face_size, face_roi
+        
+    except Exception as e:
+        print(f"[detector_utils] Error calculating face center and size: {e}")
+        return None
+
+def is_mediapipe_face_within_calibrated_bounds(face_landmarks, frame_size, calibrated_face_center, 
+                                              calibrated_face_size, face_roi_scale=1.5):
+    """
+    현재 감지된 얼굴이 캘리브레이션된 운전자의 위치와 크기 범위 내에 있는지 확인
+    
+    Args:
+        face_landmarks: 현재 MediaPipe Face Mesh 랜드마크
+        frame_size: (height, width) 튜플
+        calibrated_face_center: 캘리브레이션된 얼굴 중심점
+        calibrated_face_size: 캘리브레이션된 얼굴 크기
+        face_roi_scale: 얼굴 ROI 스케일 팩터
+    
+    Returns:
+        bool: 얼굴이 범위 내에 있으면 True
+    """
+    if calibrated_face_center is None or calibrated_face_size is None:
+        return True  # 캘리브레이션되지 않았으면 모든 얼굴 허용
+    
+    # 현재 얼굴 중심점과 크기 계산
+    current_face_info = calculate_mediapipe_face_center_and_size(face_landmarks, frame_size)
+    if current_face_info is None:
+        return False
+    
+    current_face_center, current_face_size, _ = current_face_info
+    current_face_center_x, current_face_center_y = current_face_center
+    current_face_width, current_face_height = current_face_size
+    
+    # 캘리브레이션된 값들
+    calibrated_center_x, calibrated_center_y = calibrated_face_center
+    calibrated_width, calibrated_height = calibrated_face_size
+    
+    # 새로운 방식: 캘리브레이션된 얼굴 ROI의 설정된 배수로 detection 영역 설정
+    roi_width = calibrated_width * face_roi_scale
+    roi_height = calibrated_height * face_roi_scale
+    
+    # ROI의 경계 계산
+    roi_x1 = calibrated_center_x - roi_width / 2
+    roi_y1 = calibrated_center_y - roi_height / 2
+    roi_x2 = calibrated_center_x + roi_width / 2
+    roi_y2 = calibrated_center_y + roi_height / 2
+    
+    # 현재 얼굴이 ROI 내에 있는지 확인
+    current_face_x1 = current_face_center_x - current_face_width / 2
+    current_face_y1 = current_face_center_y - current_face_height / 2
+    current_face_x2 = current_face_center_x + current_face_width / 2
+    current_face_y2 = current_face_center_y + current_face_height / 2
+    
+    # 얼굴이 ROI와 겹치는지 확인
+    face_in_roi = (current_face_x1 < roi_x2 and current_face_x2 > roi_x1 and
+                  current_face_y1 < roi_y2 and current_face_y2 > roi_y1)
+    
+    if not face_in_roi:
+        print(f"[detector_utils] Face rejected - outside ROI bounds")
+        print(f"[detector_utils] ROI: ({roi_x1:.1f}, {roi_y1:.1f}) to ({roi_x2:.1f}, {roi_y2:.1f})")
+        print(f"[detector_utils] Face: ({current_face_x1:.1f}, {current_face_y1:.1f}) to ({current_face_x2:.1f}, {current_face_y2:.1f})")
+        return False
+    
+    return True 

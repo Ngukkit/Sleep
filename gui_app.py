@@ -144,7 +144,8 @@ class DragDropLineEdit(QLineEdit):
                                    f"Please drop video or image files. Supported formats:\n"
                                    f"Video: {', '.join(video_extensions)}\n"
                                    f"Image: {', '.join(image_extensions)}")
-    
+        self.setFocus()  # 드롭 후 입력창에 포커스 강제 부여
+
     def get_image_files(self):
         """Return the list of image files for sequential viewing"""
         return self.image_files.copy()
@@ -161,7 +162,7 @@ class DragDropLineEdit(QLineEdit):
 
 
 class VideoThread(QThread):
-    change_pixmap_signal = pyqtSignal(np.ndarray)
+    change_pixmap_signal = pyqtSignal(np.ndarray, int) # frame, progress_percent
     is_running = False
 
     def __init__(self, config_args):
@@ -502,14 +503,11 @@ class VideoThread(QThread):
                         (frame_h, frame_w), np.array(dlib_results["landmark_points"])
                     )
                     if calibrated_successfully:
-                    # print("[VideoThread] Dlib front pose calibrated successfully.")
-                      pass
+                        print("[VideoThread] Dlib front pose calibrated successfully.")
+                    else:
+                        print("[VideoThread] Dlib front pose calibration failed.")
                 else:
-                    # print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
-                    pass
-            else:
-                # print("[VideoThread] Dlib front pose calibration failed (no face detected).")
-                pass
+                    print("[VideoThread] Dlib front pose calibration failed (no landmarks).")
                 self.dlib_calibration_trigger = False # 캘리브레이션 요청 초기화
         
         # --- 3. OpenVINO Analysis ---
@@ -561,7 +559,7 @@ class VideoThread(QThread):
                     if calibrated_successfully:
                         print("[VideoThread] MediaPipe front pose calibrated successfully.")
                     else:
-                        print("[VideoThread] MediaPipe front pose calibration failed (no landmarks).")
+                        print("[VideoThread] MediaPipe front pose calibration failed.")
                 else:
                     print("[VideoThread] MediaPipe front pose calibration failed (no face detected).")
                 self.mediapipe_calibration_trigger = False # 캘리브레이션 요청 초기화
@@ -643,7 +641,17 @@ class VideoThread(QThread):
         self.prev_frame_time = new_frame_time
         im0 = self.visualizer_instance.draw_fps(im0, fps)
             
-        self.change_pixmap_signal.emit(im0)
+        # --- 진행률 계산 및 emit ---
+        try:
+            current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
+            total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total_frames > 0:
+                progress_percent = int(100 * current_frame / total_frames)
+            else:
+                progress_percent = 0
+        except Exception:
+            progress_percent = 0
+        self.change_pixmap_signal.emit(im0, progress_percent)
             # time.sleep(0.01) # CPU 사용량 조절을 위해 필요시 주석 해제
 
     def stop(self):
@@ -750,6 +758,9 @@ class MainApp(QWidget):
             self.setWindowIcon(QIcon(ROOT / 'icons' / 'icon.png'))
         except Exception as e:
             print(f"Error setting window icon: {e}")
+
+        self.slider_position_user_changing = False  # 사용자가 슬라이더 조작 중인지 플래그
+        # (신호 연결은 init_ui에서)
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -909,7 +920,9 @@ class MainApp(QWidget):
         self.slider_position.setFixedWidth(200)
         self.label_position_value = QLabel("0%")
         self.slider_position.valueChanged.connect(self.update_video_position)
-        
+        # 슬라이더 동기화 신호 연결 (여기서 해야 linter 오류 없음)
+        self.slider_position.sliderPressed.connect(self.on_slider_pressed)
+        self.slider_position.sliderReleased.connect(self.on_slider_released)
         # 슬라이더들을 layout에 추가
         speed_layout = QHBoxLayout()
         speed_layout.addWidget(self.label_speed)
@@ -956,7 +969,7 @@ class MainApp(QWidget):
         source_weights_layout.addWidget(self.btn_browse_weights)
         source_weights_layout.addStretch()  # 우측 공간 확보
         source_weights_layout.addWidget(self.btn_config)
-        source_weights_layout.addWidget(self.btn_reload_config)
+        source_weights_layout.addWidget(self.btn_reload_config)  # 추가
 
         main_layout.addLayout(source_weights_layout)
         main_layout.addLayout(socket_layout)
@@ -1003,6 +1016,9 @@ class MainApp(QWidget):
                 self.toggle_calibration_mode()  # 캘리브레이션 모드 해제
 
     def start_detection(self):
+        # 항상 config를 최신으로 반영
+        from config_manager import config_manager
+        config_manager.reload()
         if self.thread is not None and self.thread.isRunning():
             return
 
@@ -1073,15 +1089,28 @@ class MainApp(QWidget):
         self.is_set_mediapipe_front_face_mode = False
         self.is_set_openvino_front_face_mode = False
 
+    def on_slider_pressed(self):
+        self.slider_position_user_changing = True
+    def on_slider_released(self):
+        self.slider_position_user_changing = False
+        # 슬라이더 놓을 때 VideoThread에 위치 변경 요청
+        if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
+            position_percent = self.slider_position.value()
+            self.thread.set_video_position(position_percent)
+            self.label_position_value.setText(f"{position_percent}%")
 
-    @pyqtSlot(np.ndarray)
-    def update_image(self, cv_img):
+    @pyqtSlot(np.ndarray, int)
+    def update_image(self, cv_img, progress_percent):
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(convert_to_Qt_format)
         self.image_label.setPixmap(pixmap)
+        # --- 슬라이더 자동 갱신 ---
+        if not self.slider_position_user_changing:
+            self.slider_position.setValue(progress_percent)
+            self.label_position_value.setText(f"{progress_percent}%")
 
     def convert_cv_qt(self, cv_img):
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -1187,6 +1216,27 @@ class MainApp(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"설정 편집기를 열 수 없습니다: {e}")
 
+    def reload_config(self):
+        """설정 파일을 다시 로드하고 실행 중인 감지 스레드를 재시작합니다."""
+        try:
+            from config_manager import config_manager
+            config_manager.reload()
+            
+            # 실행 중인 감지 스레드가 있으면 재시작
+            if self.thread and self.thread.isRunning():
+                print("Restarting detection thread to apply new configuration...")
+                self.stop_detection()
+                import time
+                time.sleep(0.5)  # 잠시 대기
+                self.start_detection()
+                QMessageBox.information(self, "Config Reloaded", 
+                                      "Configuration reloaded and detection restarted successfully.")
+            else:
+                print("Configuration reloaded successfully.")
+                QMessageBox.information(self, "Config Reloaded", "Configuration reloaded successfully.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to reload configuration: {e}")
+
     def closeEvent(self, event):
         """
         PyQt에서 창이 닫힐 때 자동으로 호출되는 함수입니다.
@@ -1205,35 +1255,6 @@ class MainApp(QWidget):
                 self.thread.process_image_sequence()
             else:
                 QMessageBox.information(self, "End of Sequence", "This is the last image in the sequence.")
-
-    def reload_config(self):
-        """설정을 다시 로드합니다."""
-        try:
-            from config_manager import config_manager
-            
-            # 설정 파일 다시 로드
-            config_manager.reload()
-            
-            # 실행 중이면 감지 스레드 재시작
-            if self.thread and self.thread.isRunning():
-                self.stop_detection()
-                import time; time.sleep(0.5)
-                self.start_detection()
-                QMessageBox.information(
-                    self, 
-                    "Configuration Reloaded", 
-                    "설정 파일이 성공적으로 다시 로드되었습니다.\n감지 스레드가 재시작되어 새로운 설정이 적용되었습니다."
-                )
-            else:
-                QMessageBox.information(
-                    self, 
-                    "Configuration Reloaded", 
-                    "설정 파일이 성공적으로 다시 로드되었습니다.\n감지를 시작하면 새로운 설정이 적용됩니다."
-                )
-            print("Configuration reloaded successfully")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"설정을 다시 로드할 수 없습니다: {e}")
-            print(f"Error reloading config: {e}")
 
     def _load_gui_state(self):
         try:
@@ -1333,12 +1354,11 @@ class MainApp(QWidget):
             self.label_speed_value.setText(f"{speed:.2f}x")
 
     def update_video_position(self):
-        """비디오 위치 슬라이더 값이 바뀔 때 VideoThread에 반영"""
+        # 사용자가 슬라이더를 움직일 때만 호출됨
         if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
-            position_percent = self.slider_position.value()
-            # VideoThread에 위치 변경 요청
-            self.thread.set_video_position(position_percent)
-            self.label_position_value.setText(f"{position_percent}%")
+            if self.slider_position_user_changing:
+                position_percent = self.slider_position.value()
+                self.label_position_value.setText(f"{position_percent}%")
         else:
             position_percent = self.slider_position.value()
             self.label_position_value.setText(f"{position_percent}%")
