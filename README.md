@@ -10,11 +10,13 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
 ### Dlib 모델 실행 화면
 ![Dlib 모델 실행 화면](screenshot/25.png)
 
-### MediaPipe 모델 실행 화면
-![MediaPipe 모델 실행 화면](screenshot/51.png)
-
 ### OpenVINO 모델 실행 화면
-![OpenVINO 모델 실행 화면](screenshot/openvino.png)
+![OpenVINO 모델 실행 화면](screenshot/51.png)
+
+### MediaPipe 모델 실행 화면
+![MediaPipe 모델 실행 화면](screenshot/52.png)
+
+
 
 ## 🚀 주요 기능
 

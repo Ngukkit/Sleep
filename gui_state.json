@@ -2,26 +2,26 @@
     "window_geometry": {
         "x": 100,
         "y": 100,
-        "width": 1079,
+        "width": 867,
         "height": 776
     },
     "enable_yolo": false,
-    "enable_dlib": true,
-    "enable_mediapipe": false,
+    "enable_dlib": false,
+    "enable_mediapipe": true,
     "enable_mediapipe_hand": true,
     "enable_mediapipe_distracted": true,
     "enable_openvino": false,
-    "source": "/srv/shared/video/44.MP4",
+    "source": "0",
     "weights": "/home/kkit/programming/python/sleep/weights/best.pt",
     "socket_ip": "127.0.0.1",
     "socket_port": 5001,
     "enable_socket_sending": false,
-    "is_set_dlib_front_face_mode": true,
+    "is_set_dlib_front_face_mode": false,
     "is_set_mediapipe_front_face_mode": false,
     "is_set_openvino_front_face_mode": false,
     "is_calibration_mode": false,
     "video_rotation": 0,
     "aspect_ratio": 1,
     "crop_offset": "0",
-    "playback_speed": 1
+    "playback_speed": 11
 }
