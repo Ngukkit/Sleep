@@ -164,11 +164,19 @@ class OpenVINOAnalyzer:
 
     def calibrate_front_pose(self, frame_size, landmarks_5=None, landmarks_35=None):
         # 5점/35점 calibration (정면 기준값 저장)
+        print(f"[OpenVINOAnalyzer] Calibration started. frame_size: {frame_size}")
+        print(f"[OpenVINOAnalyzer] landmarks_5: {landmarks_5 is not None}, len: {len(landmarks_5) if landmarks_5 else 0}")
+        print(f"[OpenVINOAnalyzer] landmarks_35: {landmarks_35 is not None}, len: {len(landmarks_35) if landmarks_35 else 0}")
+        
         if landmarks_5 and len(landmarks_5) >= 2:
             self.calibrated_5_left_eye = landmarks_5[0]
             self.calibrated_5_right_eye = landmarks_5[1]
             # 5점 랜드마크 전체 저장 (눈동자 추적용)
             self.calibrated_landmarks_5 = landmarks_5.copy()
+            print(f"[OpenVINOAnalyzer] 5-point landmarks calibrated: left_eye={self.calibrated_5_left_eye}, right_eye={self.calibrated_5_right_eye}")
+        else:
+            print("[OpenVINOAnalyzer] Warning: 5-point landmarks insufficient for calibration")
+            
         if landmarks_35 and len(landmarks_35) >= 35:
             # 35점으로 head pose 기준값 저장
             pitch, yaw, roll, _, _ = get_head_pose_35(landmarks_35, frame_size)
@@ -182,8 +190,12 @@ class OpenVINOAnalyzer:
             self.calibrated_face_size = (max(xs)-min(xs), max(ys)-min(ys))
             # 35점 랜드마크 전체 저장 (눈동자 추적용)
             self.calibrated_landmarks_35 = landmarks_35.copy()
+            print(f"[OpenVINOAnalyzer] 35-point landmarks calibrated: head_pose=({pitch:.2f}, {yaw:.2f}, {roll:.2f})")
+        else:
+            print("[OpenVINOAnalyzer] Warning: 35-point landmarks insufficient for calibration")
+            
         self.is_calibrated = True
-        print(f"[OpenVINOAnalyzer] Calibration done. 5pt: {self.calibrated_5_left_eye}, {self.calibrated_5_right_eye} | 35pt head pose: P={getattr(self, 'calibrated_pitch', None):.2f}, Y={getattr(self, 'calibrated_yaw', None):.2f}, R={getattr(self, 'calibrated_roll', None):.2f}")
+        print(f"[OpenVINOAnalyzer] Calibration completed. is_calibrated: {self.is_calibrated}")
         return True
 
     def analyze_frame(self, frame):

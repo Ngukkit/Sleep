@@ -40,6 +40,58 @@ class Visualizer:
         # Crop offset 설정
         self.crop_offset = 0
 
+    def draw_mediapipe_roi(self, image, roi_bounds, is_calibrated=False, is_face_in_roi=True):
+        """
+        MediaPipe ROI를 시각화합니다.
+        roi_bounds: (x1, y1, x2, y2) 형태의 ROI 경계
+        is_calibrated: 캘리브레이션 완료 여부
+        is_face_in_roi: ROI 내에 얼굴이 있는지 여부
+        """
+        if roi_bounds is None:
+            return image
+        
+        x1, y1, x2, y2 = roi_bounds
+        
+        # 캘리브레이션 상태에 따른 색상 설정
+        if not is_calibrated:
+            # 캘리브레이션 전: 회색 점선
+            color = (128, 128, 128)
+            thickness = 2
+            line_type = cv2.LINE_8
+        else:
+            # 캘리브레이션 후: 얼굴이 ROI 내에 있으면 초록색, 없으면 빨간색
+            if is_face_in_roi:
+                color = (0, 255, 0)  # 초록색
+                thickness = 3
+                line_type = cv2.LINE_8
+            else:
+                color = (0, 0, 255)  # 빨간색
+                thickness = 3
+                line_type = cv2.LINE_8
+        
+        # ROI 사각형 그리기
+        cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness, line_type)
+        
+        # ROI 라벨 추가
+        label = "MediaPipe ROI"
+        if not is_calibrated:
+            label += " (Not Calibrated)"
+        elif not is_face_in_roi:
+            label += " (Face Outside)"
+        else:
+            label += " (Calibrated)"
+        
+        # 라벨 배경
+        label_size = cv2.getTextSize(label, self.font, 0.6, 2)[0]
+        cv2.rectangle(image, (int(x1), int(y1) - label_size[1] - 10), 
+                     (int(x1) + label_size[0], int(y1)), color, -1)
+        
+        # 라벨 텍스트
+        cv2.putText(image, label, (int(x1), int(y1) - 5), 
+                   self.font, 0.6, (255, 255, 255), 2)
+        
+        return image
+
     def draw_yolov5_results(self, frame, detections, names, hide_labels=False, hide_conf=False):
         tl = self.line_thickness
         h, w = frame.shape[:2]
@@ -108,9 +160,7 @@ class Visualizer:
                     self.font, self.font_scale, mouth_color, self.thickness, cv2.LINE_AA)
 
         head_pitch_degree = dlib_results.get('head_pitch_degree', 0.0)
-        # Use calibrated pitch if available
-        adjusted_pitch_degree = dlib_results.get('adjusted_pitch_degree', head_pitch_degree)
-        head_pitch_text = f"Dlib Head (Pitch): {adjusted_pitch_degree:.1f} deg (calibrated)"
+        head_pitch_text = f"Dlib Head (Pitch): {head_pitch_degree:.1f} deg"
         cv2.putText(frame, head_pitch_text, (self.text_x_align, self.dlib_info_start_y + 2 * self.text_spacing),
                     self.font, self.font_scale, head_pose_color, self.thickness, cv2.LINE_AA)
 
@@ -314,29 +364,10 @@ class Visualizer:
         # 이후 일반 상태 메시지는 danger_y_offset 이후에 표시
         text_y_offset = danger_y_offset
         
-        # ⭐ 현재 Head Pitch 값 상시 표시 (true_pitch 기반으로 변경)
-        if 'true_pitch' in mp_display_results:
-            # 실제 is_head_down 감지에 사용되는 true_pitch 값 사용
-            true_pitch_val = mp_display_results['true_pitch']
-            true_pitch_diff = mp_display_results.get('true_pitch_diff', 0.0)
-            true_pitch_threshold = mp_display_results.get('true_pitch_threshold', 10.0)
-            
-            # 캘리브레이션 상태에 따른 색상 사용
-            head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
-            
-            # 캘리브레이션된 경우 diff 값을 표시, 아닌 경우 원본 값 표시
-            is_calibrated = mp_display_results.get("mp_is_calibrated", False)
-            if is_calibrated:
-                # 캘리브레이션된 경우: diff 값이 0에 가까우면 정면
-                display_value = true_pitch_diff
-                cv2.putText(image, f"Pitch: {display_value:.1f} deg (calibrated, thresh: {true_pitch_threshold:.1f})", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
-            else:
-                # 캘리브레이션되지 않은 경우: 원본 값 표시
-                cv2.putText(image, f"Pitch: {true_pitch_val:.1f} deg (not calibrated, thresh: {true_pitch_threshold:.1f})", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
-            text_y_offset += text_spacing
-        elif 'mp_head_pitch_deg' in mp_display_results:
-            # true_pitch가 없는 경우 기존 방식 사용
+        # ⭐ 현재 Head Pitch 값 상시 표시
+        if 'mp_head_pitch_deg' in mp_display_results:
             pitch_val = mp_display_results['mp_head_pitch_deg']
+            # 캘리브레이션 상태에 따른 색상 사용
             head_pose_color = mp_display_results.get('mp_head_pose_color', (100, 100, 100))
             cv2.putText(image, f"Pitch: {pitch_val:.1f} deg", (text_x_offset, text_y_offset), font, font_scale, head_pose_color, 2)
             text_y_offset += text_spacing
@@ -463,10 +494,7 @@ class Visualizer:
             # cv2.putText(image, f"MAR: {mp_display_results['mp_mar']:.2f}", (w - 150, 60), font, 0.7, (255, 255, 0), 1)
             
             if mp_display_results.get("is_head_down"):
-                # config.json에서 true_pitch_threshold 값 가져오기 (코-눈 거리 기반)
-                from config_manager import get_mediapipe_config
-                true_pitch_threshold = get_mediapipe_config("true_pitch_threshold", 10.0)
-                cv2.putText(image, f"Head Down! (true_pitch_thresh: {true_pitch_threshold:.1f})", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
+                cv2.putText(image, "Head Down!", (text_x_offset, text_y_offset), font, font_scale, warning_color, 2)
                 text_y_offset += text_spacing
             elif mp_display_results.get("is_head_up"):
                 cv2.putText(image, "Head Up!", (text_x_offset, text_y_offset), font, font_scale, (0, 165, 255), 2)  # 주황색
@@ -613,50 +641,43 @@ class Visualizer:
             cv2.putText(frame, f"OpenVINO Ensemble {conf:.2f}", (x1, y1 - 10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, bbox_color, 2)
             
-            # 랜드마크 점 그리기 (68개 dlib 랜드마크 또는 35개 OpenVINO 랜드마크)
+            # 랜드마크 점 그리기 (68개 dlib 랜드마크)
             landmarks = face.get("landmarks_35") or face.get("landmarks_5") or []
             
-            if len(landmarks) >= 35:  # OpenVINO 35개 랜드마크 또는 dlib 68개 랜드마크
+            if len(landmarks) >= 68:  # dlib 68개 랜드마크
                 
-                if len(landmarks) >= 68:  # dlib 68개 랜드마크
-                    # dlib 68개 랜드마크 그룹별 색상 정의
-                    landmark_colors = {
-                        "jaw": (255, 0, 0),        # 파란색 (BGR)
-                        "right_eyebrow": (0, 255, 0),  # 초록색
-                        "left_eyebrow": (0, 255, 0),   # 초록색
-                        "nose": (0, 0, 255),       # 빨간색
-                        "right_eye": (0, 165, 255),    # 주황색
-                        "left_eye": (0, 165, 255),     # 주황색
-                        "mouth": (255, 0, 255),    # 마젠타
-                    }
+                # dlib 68개 랜드마크 그룹별 색상 정의
+                landmark_colors = {
+                    "jaw": (255, 0, 0),        # 파란색 (BGR)
+                    "right_eyebrow": (0, 255, 0),  # 초록색
+                    "left_eyebrow": (0, 255, 0),   # 초록색
+                    "nose": (0, 0, 255),       # 빨간색
+                    "right_eye": (0, 165, 255),    # 주황색
+                    "left_eye": (0, 165, 255),     # 주황색
+                    "mouth": (255, 0, 255),    # 마젠타
+                }
+                
+                landmark_groups = {
+                    "jaw": list(range(0, 17)),
+                    "right_eyebrow": list(range(17, 22)),
+                    "left_eyebrow": list(range(22, 27)),
+                    "nose": list(range(27, 36)),
+                    "right_eye": list(range(36, 42)),
+                    "left_eye": list(range(42, 48)),
+                    "mouth": list(range(48, 68))
+                }
+                
+                for group_name, indices in landmark_groups.items():
+                    color = landmark_colors[group_name]
+                    radius = 3
                     
-                    landmark_groups = {
-                        "jaw": list(range(0, 17)),
-                        "right_eyebrow": list(range(17, 22)),
-                        "left_eyebrow": list(range(22, 27)),
-                        "nose": list(range(27, 36)),
-                        "right_eye": list(range(36, 42)),
-                        "left_eye": list(range(42, 48)),
-                        "mouth": list(range(48, 68))
-                    }
-                    
-                    for group_name, indices in landmark_groups.items():
-                        color = landmark_colors[group_name]
-                        radius = 3
-                        
-                        for idx in indices:
-                            if idx < len(landmarks):
-                                lx, ly = landmarks[idx]
-                                cv2.circle(frame, (lx, ly), radius, color, -1)
-                                # 점 번호 표시 (디버깅용)
-                                cv2.putText(frame, str(idx), (lx+3, ly-3), 
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-                else:  # OpenVINO 35개 랜드마크
-                    # OpenVINO 35개 랜드마크를 초록색으로 표시
-                    for idx, (lx, ly) in enumerate(landmarks):
-                        cv2.circle(frame, (lx, ly), 2, (0, 255, 0), -1)  # 초록색
-                        cv2.putText(frame, str(idx), (lx+2, ly-2), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                    for idx in indices:
+                        if idx < len(landmarks):
+                            lx, ly = landmarks[idx]
+                            cv2.circle(frame, (lx, ly), radius, color, -1)
+                            # 점 번호 표시 (디버깅용)
+                            cv2.putText(frame, str(idx), (lx+3, ly-3), 
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
                 
                 # 눈동자 중심점 표시
                 pupils = face.get("estimated_pupils", [])
@@ -678,8 +699,8 @@ class Visualizer:
                         end_pt_int = (int(end_pt[0]), int(end_pt[1]))
                         cv2.line(frame, start_pt_int, end_pt_int, (255, 0, 0), 2)  # 파란색 선
                 
-                # 종합적인 상태 정보 표시 (화면 하단 중앙에 표시)
-                text_y = self.dlib_info_start_y + 2 * self.text_spacing
+                # 종합적인 상태 정보 표시
+                text_y = y2 + 20
                 text_spacing = 25
                 
                 # EAR 정보
@@ -776,54 +797,13 @@ class Visualizer:
                                self.font, self.font_scale, (0, 255, 0), 2)
                     text_y += text_spacing
                 
-                # 캘리브레이션 상태 표시 (더 아래쪽에 표시)
+                # 캘리브레이션 상태 표시
                 if face.get("is_calibrated", False):
-                    cv2.putText(frame, "Calibrated", (x1, text_y + 20), 
+                    cv2.putText(frame, "Calibrated", (x1, text_y), 
                                self.font, self.font_scale, (0, 255, 0), 1)
                 else:
-                    cv2.putText(frame, "Not Calibrated", (x1, text_y + 20), 
+                    cv2.putText(frame, "Not Calibrated", (x1, text_y), 
                                self.font, self.font_scale, (100, 100, 100), 1)
-                
-                # OpenVINO 상태 메시지들을 캘리브레이션 상태 바로 아래에 표시
-                # OpenVINO 상태 정보
-                is_calibrated = face.get("is_calibrated", False)
-                is_distracted = face.get("is_distracted", False)
-                
-                status_text = "OpenVINO: Not Calibrated"
-                status_color = (100, 100, 100) # Grey
-
-                if is_calibrated:
-                    if is_distracted:
-                        status_text = "OpenVINO: DISTRACTED!"
-                        status_color = (0, 0, 255) # Red for distracted
-                    else:
-                        status_text = "OpenVINO: OK"
-                        status_color = (0, 255, 0) # Green for looking front
-
-                cv2.putText(frame, status_text, (self.text_x_align, self.dlib_info_start_y + 1 * self.text_spacing), 
-                           self.font, self.font_scale, status_color, self.thickness)
-                
-                # 추가 OpenVINO 정보들
-                if is_calibrated:
-                    # Head pose 정보
-                    head_pose = face.get("head_pose", {})
-                    pitch = head_pose.get("pitch", 0.0)
-                    yaw = head_pose.get("yaw", 0.0)
-                    roll = head_pose.get("roll", 0.0)
-                    cv2.putText(frame, f"RYP: P{pitch:.1f}° Y{yaw:.1f}° R{roll:.1f}°", (self.text_x_align, self.dlib_info_start_y + 2 * self.text_spacing), 
-                               self.font, self.font_scale, (255, 255, 255), self.thickness)
-                    
-                    # Eye status
-                    eye_status = face.get("eye_status", "N/A")
-                    eye_color = (0, 0, 255) if face.get("is_drowsy", False) else (0, 255, 0)
-                    cv2.putText(frame, f"Eye: {eye_status}", (self.text_x_align, self.dlib_info_start_y + 3 * self.text_spacing), 
-                               self.font, self.font_scale, eye_color, self.thickness)
-                    
-                    # Mouth status
-                    mouth_status = face.get("mouth_status", "N/A")
-                    mouth_color = (0, 255, 255) if face.get("is_yawning", False) else (0, 255, 0)
-                    cv2.putText(frame, f"Mouth: {mouth_status}", (self.text_x_align, self.dlib_info_start_y + 4 * self.text_spacing), 
-                               self.font, self.font_scale, mouth_color, self.thickness)
                 text_y += text_spacing
                 
                 # 랜드마크 검증 상태 표시
@@ -861,11 +841,11 @@ class Visualizer:
                 cv2.putText(frame, f"MxV:{face.get('mouth_x_var',0):.2f} MyV:{face.get('mouth_y_var',0):.2f}", (x1, text_y), self.font, 0.45, (0,255,255), 1)
                 text_y += text_spacing
                 
-                # # Look Ahead 상태 표시 (35점 랜드마크용)
-                # is_looking_ahead = face.get("is_looking_ahead", True)
-                # look_ahead_text = "Look A head" if is_looking_ahead else "Look Away"
-                # look_ahead_color = (0, 255, 255)  # 노란색
-                # cv2.putText(frame, look_ahead_text, (x1, text_y), self.font, 0.45, look_ahead_color, 1)
+                # Look Ahead 상태 표시 (35점 랜드마크용)
+                is_looking_ahead = face.get("is_looking_ahead", True)
+                look_ahead_text = "Look A head" if is_looking_ahead else "Look Away"
+                look_ahead_color = (0, 255, 255)  # 노란색
+                cv2.putText(frame, look_ahead_text, (x1, text_y), self.font, 0.45, look_ahead_color, 1)
 
                 # --- dlib 눈 랜드마크 그리기 (하이브리드 모드용) ---
                 dlib_left_eye = face.get("dlib_left_eye", [])
@@ -905,80 +885,92 @@ class Visualizer:
         return frame
 
     def draw_openvino_status(self, frame, openvino_results):
-        # OpenVINO 상태 정보를 "Calibrate On" 메시지 바로 아래에 표시
-        is_calibrated = False
-        is_distracted = False
+        """OpenVINO 상태 정보를 화면 아래 중앙에 표시 (캘리브레이션 상태 포함)"""
+        faces = openvino_results.get("faces", [])
+        if not faces:
+            return frame
         
-        # faces 리스트에서 첫 번째 얼굴의 캘리브레이션 상태 확인
-        if openvino_results.get("faces") and len(openvino_results["faces"]) > 0:
-            face = openvino_results["faces"][0]
-            is_calibrated = face.get("is_calibrated", False)
-            is_distracted = face.get("is_distracted", False)
+        # 첫 번째 얼굴의 정보만 표시 (가장 큰 얼굴)
+        face = faces[0]
         
-        status_text = "OpenVINO: Not Calibrated"
-        status_color = (100, 100, 100) # Grey
-
+        # 화면 크기 가져오기
+        h, w = frame.shape[:2]
+        
+        # 캘리브레이션 상태 확인
+        is_calibrated = face.get("is_calibrated", False)
+        calibration_status = face.get("calibration_status", "Not Calibrated")
+        calibration_color = face.get("calibration_color", (100, 100, 100))  # 기본 회색
+        
+        # === Dlib 텍스트가 끝나는 지점 바로 아래에 OpenVINO 텍스트 표시 ===
+        left_text_x = 10  # 왼쪽 끝에서 10픽셀
+        # Dlib 텍스트가 끝나는 지점 계산: dlib_info_start_y + 6 * text_spacing + 7 * 25 (OpenVINO 7줄)
+        # dlib_info_start_y = 50, text_spacing = 30이므로 50 + 6 * 30 + 7 * 25 = 50 + 180 + 175 = 405
+        left_text_y = self.dlib_info_start_y + 6 * self.text_spacing + 25  # OpenVINO 끝 지점 + 10픽셀 여백
+        text_spacing = 25  # 25픽셀 간격
+        
+        # 1. 캘리브레이션 상태 표시
+        cv2.putText(frame, f"OpenVINO: {calibration_status}", 
+                   (left_text_x, left_text_y), 
+                   self.font, self.font_scale, calibration_color, self.thickness, cv2.LINE_AA)
+        
+        # 2. EAR 정보
+        ear = face.get("ear", 0.0)
+        eye_status = face.get("eye_status", "N/A")
+        eye_color = (0, 0, 255) if face.get("is_drowsy", False) else (0, 255, 0)
+        cv2.putText(frame, f"EYE : {eye_status}", 
+                   (left_text_x, left_text_y + text_spacing), 
+                   self.font, self.font_scale, eye_color, self.thickness, cv2.LINE_AA)
+        
+        # 3. Look Ahead 상태 표시
+        look_ahead_status = face.get("look_ahead_status", "")
+        look_ahead_color = (0, 255, 255)
+        if look_ahead_status == "Gaze: OFF":
+            # GAZE만 회색으로 출력
+            cv2.putText(frame, "GAZE", (left_text_x, left_text_y + 2 * text_spacing), self.font, self.font_scale, (128,128,128), self.thickness)
+        else:
+            # 상태/수치 노란색으로 출력
+            if look_ahead_status:
+                cv2.putText(frame, look_ahead_status, (left_text_x, left_text_y + 2 * text_spacing), self.font, self.font_scale, look_ahead_color, self.thickness)
+        
+        # 4. gaze_magnitude 표시
+        gaze_info = face.get("gaze_info", {})
+        gaze_magnitude = gaze_info.get("gaze_magnitude", None)
+        if gaze_magnitude is not None:
+            cv2.putText(frame, f"Gaze: {gaze_magnitude:.2f}", (left_text_x, left_text_y + 3 * text_spacing), self.font, self.font_scale, look_ahead_color, self.thickness)
+        
+        # 5. MAR 정보
+        mar = face.get("mar", 0.0)
+        mouth_status = face.get("mouth_status", "N/A")
+        mouth_color = calibration_color if not is_calibrated else ((0, 255, 255) if face.get("is_yawning", False) else (0, 255, 0))
+        cv2.putText(frame, f"OpenVINO Mouth: {mar:.3f} ({mouth_status})", 
+                   (left_text_x, left_text_y + 4 * text_spacing), 
+                   self.font, self.font_scale, mouth_color, self.thickness, cv2.LINE_AA)
+        
+        # 6. R/Y/P(roll/yaw/pitch) 정보
+        head_pose = face.get('head_pose', {})
+        # P 값을 입-턱 거리로 표시 (normalized_distance 사용)
+        normalized_distance = face.get('normalized_distance', 0.0)
+        cv2.putText(frame, f"OpenVINO: R={head_pose.get('roll',0):.1f} Y={head_pose.get('yaw',0):.1f} P={normalized_distance:.3f}", (left_text_x, left_text_y + 5 * text_spacing), self.font, self.font_scale, (0,255,0), self.thickness, cv2.LINE_AA)
+        
+        # 7. Head Down 상태 표시 추가 (캘리브레이션 후에만)
+        if is_calibrated and face.get("is_head_down", False):
+            head_down_text = "OpenVINO: HEAD DOWN!"
+            head_down_color = (0, 0, 255)  # 빨간색
+            cv2.putText(frame, head_down_text, (left_text_x, left_text_y + 6 * text_spacing), self.font, self.font_scale, head_down_color, self.thickness, cv2.LINE_AA)
+        
+        # 8. 종합 상태 표시 (캘리브레이션 후에만)
         if is_calibrated:
-            if is_distracted:
-                status_text = "OpenVINO: DISTRACTED!"
-                status_color = (0, 0, 255) # Red for distracted
-            else:
-                status_text = "OpenVINO: OK"
-                status_color = (0, 255, 0) # Green for looking front
-
-        # "Calibrate On" 메시지 바로 아래에 표시 (1번째 줄로 변경)
-        cv2.putText(frame, status_text, (self.text_x_align, self.dlib_info_start_y + 1 * self.text_spacing),
-                    self.font, self.font_scale, status_color, self.thickness, cv2.LINE_AA)
+            # 상태 우선순위: DROWSY > HEAD DOWN > DISTRACTED > NORMAL
+            status = "NORMAL"
+            if face.get('is_drowsy', False):
+                status = "DROWSY"
+            elif face.get('is_head_down', False):
+                status = "HEAD DOWN"
+            elif face.get('is_distracted', False):
+                status = "DISTRACTED"
+            cv2.putText(frame, f"OpenVINO: Status: {status}", (left_text_x, left_text_y + 7 * text_spacing), self.font, self.font_scale, (0,255,0), self.thickness, cv2.LINE_AA)
+        else:
+            # 캘리브레이션 전에는 "Not Calibrated" 표시
+            cv2.putText(frame, "OpenVINO: Not Calibrated", (left_text_x, left_text_y + 7 * text_spacing), self.font, self.font_scale, (100,100,100), self.thickness, cv2.LINE_AA)
+        
         return frame
-
-    def draw_mediapipe_roi(self, image, roi_bounds, is_calibrated=False, is_face_in_roi=True):
-        """
-        MediaPipe ROI를 시각화합니다.
-        roi_bounds: (x1, y1, x2, y2) 형태의 ROI 경계
-        is_calibrated: 캘리브레이션 완료 여부
-        is_face_in_roi: ROI 내에 얼굴이 있는지 여부
-        """
-        if roi_bounds is None:
-            return image
-        
-        x1, y1, x2, y2 = roi_bounds
-        
-        # 캘리브레이션 상태에 따른 색상 설정
-        if not is_calibrated:
-            # 캘리브레이션 전: 회색 점선
-            color = (128, 128, 128)
-            thickness = 2
-            line_type = cv2.LINE_8
-        else:
-            # 캘리브레이션 후: 얼굴이 ROI 내에 있으면 초록색, 없으면 빨간색
-            if is_face_in_roi:
-                color = (0, 255, 0)  # 초록색
-                thickness = 3
-                line_type = cv2.LINE_8
-            else:
-                color = (0, 0, 255)  # 빨간색
-                thickness = 3
-                line_type = cv2.LINE_8
-        
-        # ROI 사각형 그리기
-        cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness, line_type)
-        
-        # ROI 라벨 추가
-        label = "MediaPipe ROI"
-        if not is_calibrated:
-            label += " (Not Calibrated)"
-        elif not is_face_in_roi:
-            label += " (Face Outside)"
-        else:
-            label += " (Calibrated)"
-        
-        # 라벨 배경
-        label_size = cv2.getTextSize(label, self.font, 0.6, 2)[0]
-        cv2.rectangle(image, (int(x1), int(y1) - label_size[1] - 10), 
-                     (int(x1) + label_size[0], int(y1)), color, -1)
-        
-        # 라벨 텍스트
-        cv2.putText(image, label, (int(x1), int(y1) - 5), 
-                   self.font, 0.6, (255, 255, 255), 2)
-        
-        return image

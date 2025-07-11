@@ -2,7 +2,7 @@
     "window_geometry": {
         "x": 100,
         "y": 100,
-        "width": 867,
+        "width": 931,
         "height": 776
     },
     "enable_yolo": false,
@@ -11,11 +11,9 @@
     "enable_mediapipe_hand": true,
     "enable_mediapipe_distracted": true,
     "enable_openvino": false,
-    "source": "0",
+    "source": "/srv/shared/video/2025-07-03-123747-01.32.40.976-01.57.56.730.webm",
     "weights": "/home/kkit/programming/python/sleep/weights/best.pt",
-    "socket_ip": "127.0.0.1",
-    "socket_port": 5001,
-    "enable_socket_sending": false,
+    "enable_ros2_sending": true,
     "is_set_dlib_front_face_mode": false,
     "is_set_mediapipe_front_face_mode": false,
     "is_set_openvino_front_face_mode": false,
@@ -23,5 +21,5 @@
     "video_rotation": 0,
     "aspect_ratio": 1,
     "crop_offset": "0",
-    "playback_speed": 11
+    "playback_speed": -29
 }

@@ -52,7 +52,7 @@
     "enable_hand_size_filtering": true,
     "face_position_threshold": 0.3,
     "face_size_threshold": 0.5,
-    "enable_face_position_filtering": false,
+    "enable_face_position_filtering": true,
     "face_roi_scale": 1.0,
     "enable_pupil_gaze_detection": true,
     "pupil_gaze_threshold": 0.15,

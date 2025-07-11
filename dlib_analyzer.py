@@ -360,7 +360,7 @@ class DlibAnalyzer:
             
             # Determine eye threshold - 항상 절대값(EYE_AR_THRESH)만 사용 (캘리브레이션 무시)
             current_eye_thresh = EYE_AR_THRESH
-
+            
             # Eye state detection with head down consideration
             if ear < current_eye_thresh:
                 # Eyes appear closed
