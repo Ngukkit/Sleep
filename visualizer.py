@@ -686,7 +686,7 @@ class Visualizer:
                 ear = face.get("ear", 0.0)
                 eye_status = face.get("eye_status", "N/A")
                 eye_color = (0, 0, 255) if face.get("is_drowsy", False) else (0, 255, 0)
-                cv2.putText(frame, f"EYE : {eye_status}", (x1, text_y), 
+                cv2.putText(frame, f"EYE : {eye_status}", (self.text_x_align, text_y), 
                            self.font, self.font_scale, eye_color, self.thickness)
                 text_y += text_spacing
                 
@@ -695,18 +695,18 @@ class Visualizer:
                 look_ahead_color = (0, 255, 255)  # 노란색
                 if look_ahead_status == "Gaze: OFF":
                     # GAZE만 회색으로 출력
-                    cv2.putText(frame, "GAZE", (x1, text_y), self.font, self.font_scale, (128,128,128), self.thickness)
+                    cv2.putText(frame, "GAZE", (self.text_x_align, text_y), self.font, self.font_scale, (128,128,128), self.thickness)
                 else:
                     # 상태/수치 노란색으로 출력
                     if look_ahead_status:
-                        cv2.putText(frame, look_ahead_status, (x1, text_y), self.font, self.font_scale, look_ahead_color, self.thickness)
+                        cv2.putText(frame, look_ahead_status, (self.text_x_align, text_y), self.font, self.font_scale, look_ahead_color, self.thickness)
                         text_y += text_spacing
                 
                 # MAR 정보
                 mar = face.get("mar", 0.0)
                 mouth_status = face.get("mouth_status", "N/A")
                 mouth_color = (0, 255, 255) if face.get("is_yawning", False) else (0, 255, 0)
-                cv2.putText(frame, f"MAR: {mar:.3f} ({mouth_status})", (x1, text_y), 
+                cv2.putText(frame, f"MAR: {mar:.3f} ({mouth_status})", (self.text_x_align, text_y), 
                            self.font, self.font_scale, mouth_color, self.thickness)
                 text_y += text_spacing
                 
@@ -718,70 +718,70 @@ class Visualizer:
                 # 새로운 입-턱 거리 기반 값 사용
                 normalized_distance = face.get("normalized_distance", 0.0)
                 head_color = (0, 0, 255) if face.get("is_head_down", False) else (0, 255, 0)
-                cv2.putText(frame, f"Head: P{normalized_distance:.3f} Y{yaw:.1f}° R{roll:.1f}°", (x1, text_y), 
+                cv2.putText(frame, f"Head: P{normalized_distance:.3f} Y{yaw:.1f}° R{roll:.1f}°", (self.text_x_align, text_y), 
                            self.font, self.font_scale, head_color, self.thickness)
                 text_y += text_spacing
                 
                 # 고개 숙임 시간 표시
                 if face.get("is_head_down", False):
                     head_down_duration = face.get("head_down_duration", 0)
-                    cv2.putText(frame, f"Head Down: {head_down_duration:.1f}s", (x1, text_y), 
+                    cv2.putText(frame, f"Head Down: {head_down_duration:.1f}s", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 0, 255), self.thickness)
                     text_y += text_spacing
                 
                 # 주의 이탈 시간 표시
                 if face.get("is_distracted", False):
                     distraction_duration = face.get("distraction_duration", 0)
-                    cv2.putText(frame, f"Distracted: {distraction_duration:.1f}s", (x1, text_y), 
+                    cv2.putText(frame, f"Distracted: {distraction_duration:.1f}s", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (255, 0, 255), self.thickness)
                     text_y += text_spacing
                 
                 # 졸음 지속 시간 표시
                 if face.get("is_drowsy", False):
                     drowsy_duration = face.get("drowsy_duration", 0)
-                    cv2.putText(frame, f"Drowsy: {drowsy_duration:.1f}s", (x1, text_y), 
+                    cv2.putText(frame, f"Drowsy: {drowsy_duration:.1f}s", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 165, 255), self.thickness)
                     text_y += text_spacing
                 
                 # 하품 지속 시간 표시
                 if face.get("is_yawning", False):
                     yawn_duration = face.get("yawn_duration", 0)
-                    cv2.putText(frame, f"Yawning: {yawn_duration:.1f}s", (x1, text_y), 
+                    cv2.putText(frame, f"Yawning: {yawn_duration:.1f}s", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 255, 255), self.thickness)
                     text_y += text_spacing
                 
                 # 종합 상태 표시
                 if face.get("is_dangerous_condition", False):
-                    cv2.putText(frame, "DANGER: Eyes Closed + Head Down!", (x1, text_y), 
+                    cv2.putText(frame, "DANGER: Eyes Closed + Head Down!", (self.text_x_align, text_y), 
                                self.font, self.font_scale + 0.2, (0, 0, 255), 3)
                     text_y += text_spacing + 10
                 elif face.get("is_drowsy", False):
-                    cv2.putText(frame, "DROWSY DETECTED!", (x1, text_y), 
+                    cv2.putText(frame, "DROWSY DETECTED!", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 165, 255), 2)
                     text_y += text_spacing
                 elif face.get("is_yawning", False):
-                    cv2.putText(frame, "YAWNING DETECTED!", (x1, text_y), 
+                    cv2.putText(frame, "YAWNING DETECTED!", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 255, 255), 2)
                     text_y += text_spacing
                 elif face.get("is_distracted", False):
-                    cv2.putText(frame, "DISTRACTED!", (x1, text_y), 
+                    cv2.putText(frame, "DISTRACTED!", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (255, 0, 255), 2)
                     text_y += text_spacing
                 elif face.get("is_head_down", False):
-                    cv2.putText(frame, "HEAD DOWN!", (x1, text_y), 
+                    cv2.putText(frame, "HEAD DOWN!", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 0, 255), 2)
                     text_y += text_spacing
                 else:
-                    cv2.putText(frame, "NORMAL", (x1, text_y), 
+                    cv2.putText(frame, "NORMAL", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 255, 0), 2)
                     text_y += text_spacing
                 
                 # 캘리브레이션 상태 표시 (더 아래쪽에 표시)
                 if face.get("is_calibrated", False):
-                    cv2.putText(frame, "Calibrated", (x1, text_y + 20), 
+                    cv2.putText(frame, "Calibrated", (self.text_x_align, text_y + 20), 
                                self.font, self.font_scale, (0, 255, 0), 1)
                 else:
-                    cv2.putText(frame, "Not Calibrated", (x1, text_y + 20), 
+                    cv2.putText(frame, "Not Calibrated", (self.text_x_align, text_y + 20), 
                                self.font, self.font_scale, (100, 100, 100), 1)
                 
                 # OpenVINO 상태 메시지들을 캘리브레이션 상태 바로 아래에 표시
@@ -829,10 +829,10 @@ class Visualizer:
                 # 랜드마크 검증 상태 표시
                 validation_status = face.get("landmark_validation", "Unknown")
                 if validation_status == "Valid":
-                    cv2.putText(frame, f"Landmarks: {validation_status}", (x1, text_y), 
+                    cv2.putText(frame, f"Landmarks: {validation_status}", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 255, 0), 1)
                 else:
-                    cv2.putText(frame, f"Landmarks: {validation_status}", (x1, text_y), 
+                    cv2.putText(frame, f"Landmarks: {validation_status}", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 0, 255), 1)
                 
             else:

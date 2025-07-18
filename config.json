@@ -4,7 +4,7 @@
   "enable_dlib": false,
   "enable_mediapipe": true,
   "enable_openvino": false,
-  "socket_enabled": false,
+  "socket_enabled": true,
   "socket_ip": "127.0.0.1",
   "socket_port": 5001,
   "source": 0
