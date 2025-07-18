@@ -165,4 +165,6 @@ runs/
 *.7z 
 
 # intel 폴더 내 xml 파일은 git에 포함
-!intel/*.xml 
+!intel/*.xml Ros2_ws/build/
+Ros2_ws/install/
+Ros2_ws/log/
