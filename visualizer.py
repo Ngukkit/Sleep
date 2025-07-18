@@ -679,7 +679,9 @@ class Visualizer:
                         cv2.line(frame, start_pt_int, end_pt_int, (255, 0, 0), 2)  # 파란색 선
                 
                 # 종합적인 상태 정보 표시 (화면 하단 중앙에 표시)
-                text_y = self.dlib_info_start_y + 2 * self.text_spacing
+                h, w = frame.shape[:2]
+                base_y = int(h * 0.6)  # 화면 높이의 60% 지점에서 시작
+                text_y = base_y
                 text_spacing = 25
                 
                 # EAR 정보
@@ -696,6 +698,7 @@ class Visualizer:
                 if look_ahead_status == "Gaze: OFF":
                     # GAZE만 회색으로 출력
                     cv2.putText(frame, "GAZE", (self.text_x_align, text_y), self.font, self.font_scale, (128,128,128), self.thickness)
+                    text_y += text_spacing
                 else:
                     # 상태/수치 노란색으로 출력
                     if look_ahead_status:
@@ -778,14 +781,15 @@ class Visualizer:
                 
                 # 캘리브레이션 상태 표시 (더 아래쪽에 표시)
                 if face.get("is_calibrated", False):
-                    cv2.putText(frame, "Calibrated", (self.text_x_align, text_y + 20), 
+                    cv2.putText(frame, "Calibrated", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (0, 255, 0), 1)
+                    text_y += text_spacing
                 else:
-                    cv2.putText(frame, "Not Calibrated", (self.text_x_align, text_y + 20), 
+                    cv2.putText(frame, "Not Calibrated", (self.text_x_align, text_y), 
                                self.font, self.font_scale, (100, 100, 100), 1)
+                    text_y += text_spacing
                 
-                # OpenVINO 상태 메시지들을 캘리브레이션 상태 바로 아래에 표시
-                # OpenVINO 상태 정보
+                # OpenVINO 상태 메시지들을 같은 흐름에 포함
                 is_calibrated = face.get("is_calibrated", False)
                 is_distracted = face.get("is_distracted", False)
                 
@@ -800,30 +804,8 @@ class Visualizer:
                         status_text = "OpenVINO: OK"
                         status_color = (0, 255, 0) # Green for looking front
 
-                cv2.putText(frame, status_text, (self.text_x_align, self.dlib_info_start_y + 1 * self.text_spacing), 
+                cv2.putText(frame, status_text, (self.text_x_align, text_y), 
                            self.font, self.font_scale, status_color, self.thickness)
-                
-                # 추가 OpenVINO 정보들
-                if is_calibrated:
-                    # Head pose 정보
-                    head_pose = face.get("head_pose", {})
-                    pitch = head_pose.get("pitch", 0.0)
-                    yaw = head_pose.get("yaw", 0.0)
-                    roll = head_pose.get("roll", 0.0)
-                    cv2.putText(frame, f"RYP: P{pitch:.1f}° Y{yaw:.1f}° R{roll:.1f}°", (self.text_x_align, self.dlib_info_start_y + 2 * self.text_spacing), 
-                               self.font, self.font_scale, (255, 255, 255), self.thickness)
-                    
-                    # Eye status
-                    eye_status = face.get("eye_status", "N/A")
-                    eye_color = (0, 0, 255) if face.get("is_drowsy", False) else (0, 255, 0)
-                    cv2.putText(frame, f"Eye: {eye_status}", (self.text_x_align, self.dlib_info_start_y + 3 * self.text_spacing), 
-                               self.font, self.font_scale, eye_color, self.thickness)
-                    
-                    # Mouth status
-                    mouth_status = face.get("mouth_status", "N/A")
-                    mouth_color = (0, 255, 255) if face.get("is_yawning", False) else (0, 255, 0)
-                    cv2.putText(frame, f"Mouth: {mouth_status}", (self.text_x_align, self.dlib_info_start_y + 4 * self.text_spacing), 
-                               self.font, self.font_scale, mouth_color, self.thickness)
                 text_y += text_spacing
                 
                 # 랜드마크 검증 상태 표시
@@ -905,30 +887,7 @@ class Visualizer:
         return frame
 
     def draw_openvino_status(self, frame, openvino_results):
-        # OpenVINO 상태 정보를 "Calibrate On" 메시지 바로 아래에 표시
-        is_calibrated = False
-        is_distracted = False
-        
-        # faces 리스트에서 첫 번째 얼굴의 캘리브레이션 상태 확인
-        if openvino_results.get("faces") and len(openvino_results["faces"]) > 0:
-            face = openvino_results["faces"][0]
-            is_calibrated = face.get("is_calibrated", False)
-            is_distracted = face.get("is_distracted", False)
-        
-        status_text = "OpenVINO: Not Calibrated"
-        status_color = (100, 100, 100) # Grey
-
-        if is_calibrated:
-            if is_distracted:
-                status_text = "OpenVINO: DISTRACTED!"
-                status_color = (0, 0, 255) # Red for distracted
-            else:
-                status_text = "OpenVINO: OK"
-                status_color = (0, 255, 0) # Green for looking front
-
-        # "Calibrate On" 메시지 바로 아래에 표시 (1번째 줄로 변경)
-        cv2.putText(frame, status_text, (self.text_x_align, self.dlib_info_start_y + 1 * self.text_spacing),
-                    self.font, self.font_scale, status_color, self.thickness, cv2.LINE_AA)
+        # OpenVINO 상태 메시지 중복 방지: 이 함수에서는 아무것도 출력하지 않음
         return frame
 
     def draw_mediapipe_roi(self, image, roi_bounds, is_calibrated=False, is_face_in_roi=True):
