@@ -15,21 +15,12 @@ from PIL import Image, ImageTk
 from PIL.ExifTags import TAGS
 from config_manager import ConfigManager, get_mediapipe_config, get_openvino_config
 
-import rclpy
-from result_publisher.publisher_node import ResultPublisher
 import visualizer
 import cv2
 import time
 import torch
 import argparse
 import socket_sender
-
-try:
-    import rclpy
-    from result_publisher.publisher_node import ResultPublisher
-    ROS2_AVAILABLE = True
-except ImportError:
-    ROS2_AVAILABLE = False
 
 # ROS2 Python 패키지 상대경로 자동 추가 (sleep 프로젝트 어디서든 동작)
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +45,25 @@ from mediapipe import Image as mp_Image
 from detector_utils import calculate_ear, calculate_mar
 
 GUI_STATE_FILE = "gui_state.json"
+
+def get_enable_ros2_sending():
+    try:
+        with open(GUI_STATE_FILE, 'r') as f:
+            state = json.load(f)
+            return state.get('enable_ros2_sending', False)
+    except Exception:
+        return False
+
+enable_ros2_sending = get_enable_ros2_sending()
+ROS2_AVAILABLE = False
+if enable_ros2_sending:
+    try:
+        import rclpy
+        from result_publisher.publisher_node import ResultPublisher
+        ROS2_AVAILABLE = True
+    except ImportError:
+        print("[Warning] ROS2 패키지가 없어 ROS2 전송 기능이 비활성화됩니다.")
+        enable_ros2_sending = False
 
 def get_exif_orientation(image_path):
     """EXIF Orientation 정보를 읽어서 회전 방향을 반환"""
@@ -237,7 +247,7 @@ class VideoThread(QThread):
 
         # ROS2 Publisher 인스턴스 생성 (앱 전체에서 1회만, 조건부)
         self.ros2_publisher = None
-        self.enable_ros2_sending = self.config_args.get('enable_ros2_sending', False)
+        self.enable_ros2_sending = config_args.get('enable_ros2_sending', False)
         if self.enable_ros2_sending and ROS2_AVAILABLE:
             if not rclpy.ok():
                 rclpy.init()
