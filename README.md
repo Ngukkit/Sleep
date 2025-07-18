@@ -347,3 +347,40 @@ OpenVINO 분석기의 세부 설정은 `config.json`의 `openvino` 섹션에서 
 | MediaPipe | 높음 | 빠름 | 보통 | 보통 |
 | OpenVINO | 매우 높음 | 매우 빠름 | 낮음 | 보통 |
 | YOLO | 보통 | 빠름 | 높음 | 높음 |
+
+## ROS2 워크스페이스 빌드 및 실행법
+
+1. 의존 패키지 설치(최초 1회, Ubuntu Humble 기준):
+   ```bash
+   sudo apt update
+   sudo apt install python3-colcon-common-extensions ros-humble-ros-base ros-humble-rclcpp ros-humble-rclpy ros-humble-std-msgs nlohmann-json3-dev
+   ```
+
+2. ROS2 워크스페이스 빌드:
+   ```bash
+   cd Ros2_ws
+   colcon build
+   ```
+
+3. 환경설정:
+   ```bash
+   source install/setup.bash
+   # 또는 zsh 사용시
+   # source install/setup.zsh
+   ```
+
+4. 실행 예시:
+   - Python 퍼블리셔 노드 실행:
+     ```bash
+     ros2 run result_publisher publisher_node
+     ```
+   - C++ 서브스크라이버 노드 실행:
+     ```bash
+     ros2 run result_subscriber result_subscriber_node
+     ```
+
+5. 참고:
+   - 빌드/설치/로그 디렉토리는 git에 포함하지 않으므로, 각 PC에서 반드시 colcon build를 해주세요.
+   - source install/setup.bash 는 반드시 Ros2_ws 폴더에서 실행해야 합니다.
+   - publisher는 프로그램에서 자동 실행되니 result_subscriber_node만 실행해주세요
+   - ROS2 및 의존 패키지가 설치되어 있어야 정상 동작합니다.
