@@ -24,6 +24,13 @@ import torch
 import argparse
 import socket_sender
 
+try:
+    import rclpy
+    from result_publisher.publisher_node import ResultPublisher
+    ROS2_AVAILABLE = True
+except ImportError:
+    ROS2_AVAILABLE = False
+
 # ROS2 Python 패키지 상대경로 자동 추가 (sleep 프로젝트 어디서든 동작)
 ROOT = os.path.dirname(os.path.abspath(__file__))
 site_packages_glob = os.path.join(ROOT, 'Ros2_ws', 'install', '*', 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
@@ -228,10 +235,16 @@ class VideoThread(QThread):
         self._crop_offset = 0
         self.requested_seek_frame = None  # 안전한 시킹 요청 변수 추가
 
-        # ROS2 Publisher 인스턴스 생성 (앱 전체에서 1회만)
-        if not rclpy.ok():
-            rclpy.init()
-        self.ros2_publisher = ResultPublisher()
+        # ROS2 Publisher 인스턴스 생성 (앱 전체에서 1회만, 조건부)
+        self.ros2_publisher = None
+        self.enable_ros2_sending = self.config_args.get('enable_ros2_sending', False)
+        if self.enable_ros2_sending and ROS2_AVAILABLE:
+            if not rclpy.ok():
+                rclpy.init()
+            self.ros2_publisher = ResultPublisher()
+        elif self.enable_ros2_sending and not ROS2_AVAILABLE:
+            print("[Warning] ROS2 Python 패키지가 설치되어 있지 않습니다. ROS2 전송 기능이 비활성화됩니다.")
+            self.enable_ros2_sending = False
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -456,8 +469,9 @@ class VideoThread(QThread):
             # print("[VideoThread] Video capture released.")
         
         self.is_running = False
-        self.ros2_publisher.destroy_node()
-        if rclpy.ok():
+        if self.ros2_publisher:
+            self.ros2_publisher.destroy_node()
+        if ROS2_AVAILABLE and rclpy.ok():
             rclpy.shutdown()
 
     def process_image_sequence(self):
@@ -655,8 +669,8 @@ class VideoThread(QThread):
             'status': self.driver_status
         }
             # print(f"result_to_send: {result_to_send}")
-        # Only send if enabled
-        if self.config_args.get('enable_ros2_sending', True):
+        # Only send if enabled and publisher exists
+        if self.enable_ros2_sending and self.ros2_publisher:
             self.ros2_publisher.send_result(result_to_send)
         
         # --- FPS 계산 및 표시 ---
@@ -684,8 +698,9 @@ class VideoThread(QThread):
         self.is_running = False
         # print("[VideoThread] Stopping video thread...")
         self.wait()
-        self.ros2_publisher.destroy_node()
-        if rclpy.ok():
+        if self.ros2_publisher:
+            self.ros2_publisher.destroy_node()
+        if ROS2_AVAILABLE and rclpy.ok():
             rclpy.shutdown()
 
     def analyze_driver_status(self, dlib_results):
