@@ -292,6 +292,15 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
 
 ## ⚙️ 실행 방법
 
+## 설치 및 시작
+
+1. 저장소 클론:
+   ```bash
+   git clone https://github.com/Ngukkit/Sleep.git
+   cd Sleep
+   ```
+
+
 1.  **필수 라이브러리 설치:**
     ```bash
     pip install -r requirements.txt
@@ -384,3 +393,5 @@ OpenVINO 분석기의 세부 설정은 `config.json`의 `openvino` 섹션에서 
    - source install/setup.bash 는 반드시 Ros2_ws 폴더에서 실행해야 합니다.
    - publisher는 프로그램에서 자동 실행되니 result_subscriber_node만 실행해주세요
    - ROS2 및 의존 패키지가 설치되어 있어야 정상 동작합니다.
+
+

@@ -1,0 +1,53 @@
+# Git 관련
+.git
+.gitignore
+.cursorignore
+
+# Python 캐시
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# 도커 관련
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# 로그 파일
+*.log
+
+# 임시 파일
+*.tmp
+*.temp
+
+# 스크린샷 (선택적)
+screenshot/
+
+# 가중치 파일 (선택적 - 필요시 주석 해제)
+# weights/
+
+# ROS2 워크스페이스 (선택적)
+# Ros2_ws/ 

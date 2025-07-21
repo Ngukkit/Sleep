@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  sleep-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile.raspberry
+    container_name: sleep-detection-raspberry
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - .:/app
+      - /dev/video0:/dev/video0:rw
+      - /dev/video1:/dev/video1:rw  # USB 카메라
+    network_mode: host
+    privileged: true
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M 
