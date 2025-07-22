@@ -1,14 +1,25 @@
 import cv2
 import time
 import json
+import sys
+import os
+import glob
 from pathlib import Path
 from yolov5_detector import YOLOv5Detector
 from dlib_analyzer import DlibAnalyzer
 from mediapipe_analyzer import MediaPipeAnalyzer
 from openvino_analyzer import OpenVINOAnalyzer
 import rclpy
-from socket_sender import ResultPublisher, safe_json
 from config_manager import ConfigManager
+
+# ROS2 Python 패키지 상대경로 자동 추가
+ROOT = os.path.dirname(os.path.abspath(__file__))
+site_packages_glob = os.path.join(ROOT, 'Ros2_ws', 'install', '*', 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
+for path in glob.glob(site_packages_glob):
+    if os.path.isdir(path) and path not in sys.path:
+        sys.path.insert(0, path)
+
+from result_publisher.publisher_node import ResultPublisher, safe_json
 
 def load_config(config_path="config.json"):
     with open(config_path, "r") as f:
