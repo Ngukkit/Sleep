@@ -16,7 +16,7 @@ openvino
 openvino-dev
 
 # GUI Framework
-PyQt5
+#PyQt5
 
 # Facial Landmark and Analysis Libraries
 dlib
@@ -39,5 +39,7 @@ pillow
 
 # HTTP Requests ------------------------------------
 requests
+
+tqdm
 
 thop  # FLOPs computation

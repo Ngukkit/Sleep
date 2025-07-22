@@ -8,10 +8,13 @@ services:
     container_name: sleep-detection-raspberry
     environment:
       - DISPLAY=${DISPLAY}
+      - QT_QPA_PLATFORM=xcb
       - QT_X11_NO_MITSHM=1
+      - QT_PLUGIN_PATH=/usr/lib/aarch64-linux-gnu/qt5/plugins
       - OMP_NUM_THREADS=4
       - MKL_NUM_THREADS=4
       - NUMEXPR_NUM_THREADS=4
+
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - .:/app

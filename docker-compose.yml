@@ -2,17 +2,33 @@ version: '3.8'
 
 services:
   sleep-detection:
-    build: .
-    container_name: sleep-detection-app
+    build:
+      context: .
+      dockerfile: Dockerfile.raspberry
+    container_name: sleep-detection-raspberry
     environment:
       - DISPLAY=${DISPLAY}
+      - QT_QPA_PLATFORM=xcb
       - QT_X11_NO_MITSHM=1
+      - QT_PLUGIN_PATH=/usr/lib/aarch64-linux-gnu/qt5/plugins
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
+
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - .:/app
-      - /dev/video0:/dev/video0:rw  # 카메라 접근
+      - /dev/video0:/dev/video0:rw
+      - /dev/video1:/dev/video1:rw  # USB 카메라
     network_mode: host
     privileged: true
     devices:
       - /dev/video0:/dev/video0
-    restart: unless-stopped 
+      - /dev/video1:/dev/video1
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M 

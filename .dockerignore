@@ -30,6 +30,10 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
+Ros2_ws/build/
+Ros2_ws/install/
+Ros2_ws/log/
+
 # IDE
 .vscode
 .idea

@@ -22,6 +22,8 @@ import torch
 import argparse
 import socket_sender
 
+os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins/platforms"
+
 # ROS2 Python 패키지 상대경로 자동 추가 (sleep 프로젝트 어디서든 동작)
 ROOT = os.path.dirname(os.path.abspath(__file__))
 site_packages_glob = os.path.join(ROOT, 'Ros2_ws', 'install', '*', 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
@@ -904,7 +906,7 @@ class MainApp(QWidget):
         # socket_layout.addWidget(self.txt_socket_port)
         
         # --- Add socket send enable checkbox ---
-        self.chk_send_ros2 = QCheckBox("ROS2로 데이터 전송")
+        self.chk_send_ros2 = QCheckBox("ROS2 Data Send")
         self.chk_send_ros2.setChecked(self.gui_state.get("enable_ros2_sending", True))
         # socket_layout.addWidget(self.chk_send_socket)
 
