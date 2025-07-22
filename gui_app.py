@@ -26,10 +26,8 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plug
 
 # ROS2 Python 패키지 상대경로 자동 추가 (sleep 프로젝트 어디서든 동작)
 ROOT = os.path.dirname(os.path.abspath(__file__))
-site_packages_glob = os.path.join(ROOT, 'Ros2_ws', 'install', '*', 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
-for path in glob.glob(site_packages_glob):
-    if os.path.isdir(path) and path not in sys.path:
-        sys.path.insert(0, path)
+# In the Docker environment for Raspberry Pi, ROS2 libraries are expected to be in the system path.
+# Therefore, dynamically adding the path is not necessary.
 
 # Add root directory to path for imports
 if ROOT not in sys.path:
@@ -48,24 +46,8 @@ from detector_utils import calculate_ear, calculate_mar
 
 GUI_STATE_FILE = "gui_state.json"
 
-def get_enable_ros2_sending():
-    try:
-        with open(GUI_STATE_FILE, 'r') as f:
-            state = json.load(f)
-            return state.get('enable_ros2_sending', False)
-    except Exception:
-        return False
-
-enable_ros2_sending = get_enable_ros2_sending()
-ROS2_AVAILABLE = False
-if enable_ros2_sending:
-    try:
-        import rclpy
-        from result_publisher.publisher_node import ResultPublisher
-        ROS2_AVAILABLE = True
-    except ImportError:
-        print("[Warning] ROS2 패키지가 없어 ROS2 전송 기능이 비활성화됩니다.")
-        enable_ros2_sending = False
+# ROS2 related imports and initialization are handled within the VideoThread
+# to align with the thread's lifecycle.
 
 def get_exif_orientation(image_path):
     """EXIF Orientation 정보를 읽어서 회전 방향을 반환"""
@@ -250,13 +232,15 @@ class VideoThread(QThread):
         # ROS2 Publisher 인스턴스 생성 (앱 전체에서 1회만, 조건부)
         self.ros2_publisher = None
         self.enable_ros2_sending = config_args.get('enable_ros2_sending', False)
-        if self.enable_ros2_sending and ROS2_AVAILABLE:
-            if not rclpy.ok():
-                rclpy.init()
-            self.ros2_publisher = ResultPublisher()
-        elif self.enable_ros2_sending and not ROS2_AVAILABLE:
-            print("[Warning] ROS2 Python 패키지가 설치되어 있지 않습니다. ROS2 전송 기능이 비활성화됩니다.")
-            self.enable_ros2_sending = False
+        self.ROS2_AVAILABLE = False
+        if self.enable_ros2_sending:
+            try:
+                import rclpy
+                from result_publisher.publisher_node import ResultPublisher
+                self.ROS2_AVAILABLE = True
+            except ImportError:
+                print("[Warning] ROS2 Python 패키지가 설치되어 있지 않습니다. ROS2 전송 기능이 비활성화됩니다.")
+                self.enable_ros2_sending = False
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -359,6 +343,18 @@ class VideoThread(QThread):
         
         # Visualizer에 초기 crop offset 설정
         self.visualizer_instance.crop_offset = self._crop_offset
+
+        # ROS2 초기화 및 Publisher 생성
+        if self.enable_ros2_sending and self.ROS2_AVAILABLE:
+            try:
+                import rclpy
+                from result_publisher.publisher_node import ResultPublisher
+                if not rclpy.ok():
+                    rclpy.init()
+                self.ros2_publisher = ResultPublisher()
+            except Exception as e:
+                print(f"[Error] Failed to initialize ROS2: {e}")
+                self.enable_ros2_sending = False
         
         # 모듈 초기화
         if enable_yolo:
@@ -483,7 +479,7 @@ class VideoThread(QThread):
         self.is_running = False
         if self.ros2_publisher:
             self.ros2_publisher.destroy_node()
-        if ROS2_AVAILABLE and rclpy.ok():
+        if self.ROS2_AVAILABLE and rclpy.ok():
             rclpy.shutdown()
 
     def process_image_sequence(self):
@@ -712,7 +708,7 @@ class VideoThread(QThread):
         self.wait()
         if self.ros2_publisher:
             self.ros2_publisher.destroy_node()
-        if ROS2_AVAILABLE and rclpy.ok():
+        if self.ROS2_AVAILABLE and rclpy.ok():
             rclpy.shutdown()
 
     def analyze_driver_status(self, dlib_results):
