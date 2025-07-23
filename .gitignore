@@ -154,6 +154,7 @@ runs/
 # screenshot 폴더는 예외로 포함
 !screenshot/
 !screenshot/*.png
+!screenshot/*.jpg
 
 # Data files
 *.csv
