@@ -213,6 +213,21 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
 
 ## 📋 버전 히스토리
 
+## 📝 v1.10 업데이트 내용
+
+- **라즈베리파이 ROS2 연동**: 라즈베리파이에서 ROS2 Publisher 노드가 실행되어 C++ Subscriber 노드로 토픽을 통해 데이터를 전송합니다.
+
+## 📸 실행 화면 (v1.10)
+
+### 1. 라즈베리파이 장비 사진
+![라즈베리파이 장비](screenshot/1.jpg)
+
+### 2. Ubuntu Subscriber 실행 화면
+![Ubuntu Subscriber](screenshot/2.jpg)
+
+### 3. 라즈베리파이 GUI 환경 실행 화면
+![라즈베리파이 GUI](screenshot/3.jpg)
+
 ### v1.06 - 얼굴 위치 필터링 시스템 개선 및 좌우 대칭성 향상
 - **ROI 중심점 계산 개선**: 코 랜드마크를 기준점으로 사용하여 좌우 대칭성 향상
 - **얼굴 감지 범위 최적화**: 캘리브레이션된 얼굴 크기의 1.5배로 detection 영역 설정
