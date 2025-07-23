@@ -45,6 +45,21 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
     - `Calibrate Front Face` 버튼으로 Dlib, MediaPipe, OpenVINO의 정면 기준점을 동시에 보정합니다.
 - **소켓 통신**: 분석 결과를 외부 C++ 서버로 전송하는 기능을 포함하며, GUI에서 활성화/비활성화할 수 있습니다.
 
+## 📝 v1.10 업데이트 내용
+
+- **라즈베리파이 와 ROS2 연동**: 라즈베리파이에서 ROS2 Publisher 노드가 실행되어 C++ Subscriber 노드로 토픽을 통해 데이터를 전송합니다.
+
+## 📸 실행 화면 (v1.10)
+
+### 1. 라즈베리파이 장비 사진
+![라즈베리파이 장비](screenshot/01.jpg)
+
+### 2. Ubuntu Subscriber 실행 화면
+![Ubuntu Subscriber](screenshot/2.png)
+
+### 3. 라즈베리파이 GUI 환경 실행 화면
+![라즈베리파이 GUI](screenshot/3.png)
+
 ## 📝 v1.06 업데이트 내용
 
 ### 🎯 얼굴 위치 필터링 시스템 개선
@@ -212,21 +227,6 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
 - 불필요한 파일들 제거 및 코드 구조 개선
 
 ## 📋 버전 히스토리
-
-## 📝 v1.10 업데이트 내용
-
-- **라즈베리파이 ROS2 연동**: 라즈베리파이에서 ROS2 Publisher 노드가 실행되어 C++ Subscriber 노드로 토픽을 통해 데이터를 전송합니다.
-
-## 📸 실행 화면 (v1.10)
-
-### 1. 라즈베리파이 장비 사진
-![라즈베리파이 장비](screenshot/01.jpg)
-
-### 2. Ubuntu Subscriber 실행 화면
-![Ubuntu Subscriber](screenshot/2.png)
-
-### 3. 라즈베리파이 GUI 환경 실행 화면
-![라즈베리파이 GUI](screenshot/3.png)
 
 ### v1.06 - 얼굴 위치 필터링 시스템 개선 및 좌우 대칭성 향상
 - **ROI 중심점 계산 개선**: 코 랜드마크를 기준점으로 사용하여 좌우 대칭성 향상
