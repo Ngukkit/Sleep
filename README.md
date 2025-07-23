@@ -220,13 +220,13 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
 ## 📸 실행 화면 (v1.10)
 
 ### 1. 라즈베리파이 장비 사진
-![라즈베리파이 장비](screenshot/1.jpg)
+![라즈베리파이 장비](screenshot/01.jpg)
 
 ### 2. Ubuntu Subscriber 실행 화면
-![Ubuntu Subscriber](screenshot/2.jpg)
+![Ubuntu Subscriber](screenshot/2.png)
 
 ### 3. 라즈베리파이 GUI 환경 실행 화면
-![라즈베리파이 GUI](screenshot/3.jpg)
+![라즈베리파이 GUI](screenshot/3.png)
 
 ### v1.06 - 얼굴 위치 필터링 시스템 개선 및 좌우 대칭성 향상
 - **ROI 중심점 계산 개선**: 코 랜드마크를 기준점으로 사용하여 좌우 대칭성 향상
