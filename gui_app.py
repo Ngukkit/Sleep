@@ -20,12 +20,15 @@ import cv2
 import time
 import torch
 import argparse
-import socket_sender
+# import socket_sender # socket_sender.py 직접 임포트
 
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins/platforms"
 
 # ROS2 Python 패키지 상대경로 자동 추가 (sleep 프로젝트 어디서든 동작)
 ROOT = os.path.dirname(os.path.abspath(__file__))
+ROS2_WS_SRC_PATH = os.path.join(ROOT, 'Ros2_ws', 'src')
+if ROS2_WS_SRC_PATH not in sys.path:
+    sys.path.append(ROS2_WS_SRC_PATH)
 # In the Docker environment for Raspberry Pi, ROS2 libraries are expected to be in the system path.
 # Therefore, dynamically adding the path is not necessary.
 
@@ -33,16 +36,27 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-import yolov5_detector # 'detect' 대신 'yolov5_detector'를 직접 임포트
-import dlib_analyzer # Ensure dlib_analyzer.py is in the same directory or accessible
+#import yolov5_detector # 'detect' 대신 'yolov5_detector'를 직접 임포트
+#import dlib_analyzer # Ensure dlib_analyzer.py is in the same directory or accessible
 import mediapipe_analyzer # Ensure mediapipe_analyzer.py is in the same directory or accessible
-import openvino_analyzer # OpenVINO 분석기 임포트
+#import openvino_analyzer # OpenVINO 분석기 임포트
 
 from mediapipe.tasks.python import vision
 import mediapipe as mp
 from mediapipe import Image as mp_Image
 
 from detector_utils import calculate_ear, calculate_mar
+
+# --- ROS2 관련 임포트 ---
+try:
+    import rclpy
+    from result_publisher.publisher_node import ResultPublisher # headless와 동일하게 사용
+    ROS2_AVAILABLE = True
+except ImportError:
+    print("[Warning] ROS2 Python 패키지가 설치되어 있지 않습니다. ROS2 전송 기능이 비활성화됩니다.")
+    ROS2_AVAILABLE = False
+    rclpy = None
+    ResultPublisher = None
 
 GUI_STATE_FILE = "gui_state.json"
 
@@ -174,7 +188,7 @@ class VideoThread(QThread):
     change_pixmap_signal = pyqtSignal(np.ndarray, int) # frame, progress_percent
     is_running = False
 
-    def __init__(self, config_args):
+    def __init__(self, config_args, ros2_publisher=None): # ros2_publisher를 인자로 받음
         super().__init__()
         self.config_args = config_args
         self.is_running = True
@@ -230,17 +244,8 @@ class VideoThread(QThread):
         self.requested_seek_frame = None  # 안전한 시킹 요청 변수 추가
 
         # ROS2 Publisher 인스턴스 생성 (앱 전체에서 1회만, 조건부)
-        self.ros2_publisher = None
+        self.ros2_publisher = ros2_publisher # 외부에서 생성된 publisher 사용
         self.enable_ros2_sending = config_args.get('enable_ros2_sending', False)
-        self.ROS2_AVAILABLE = False
-        if self.enable_ros2_sending:
-            try:
-                import rclpy
-                from result_publisher.publisher_node import ResultPublisher
-                self.ROS2_AVAILABLE = True
-            except ImportError:
-                print("[Warning] ROS2 Python 패키지가 설치되어 있지 않습니다. ROS2 전송 기능이 비활성화됩니다.")
-                self.enable_ros2_sending = False
 
     # Dlib 캘리브레이션 트리거 getter/setter
     @property
@@ -344,18 +349,6 @@ class VideoThread(QThread):
         # Visualizer에 초기 crop offset 설정
         self.visualizer_instance.crop_offset = self._crop_offset
 
-        # ROS2 초기화 및 Publisher 생성
-        if self.enable_ros2_sending and self.ROS2_AVAILABLE:
-            try:
-                import rclpy
-                from result_publisher.publisher_node import ResultPublisher
-                if not rclpy.ok():
-                    rclpy.init()
-                self.ros2_publisher = ResultPublisher()
-            except Exception as e:
-                print(f"[Error] Failed to initialize ROS2: {e}")
-                self.enable_ros2_sending = False
-        
         # 모듈 초기화
         if enable_yolo:
             # print("[VideoThread] Initializing YOLOv5 Detector...")
@@ -795,10 +788,10 @@ class MainApp(QWidget):
         self.openvino_analyzer = None
         self.openvino_hybrid_analyzer = None  # OpenVINO 하이브리드 분석기 추가
         
-        # 소켓 전송용 IP/Port - 저장된 상태에서 로드
-        # self.socket_ip = self.gui_state.get("socket_ip", "127.0.0.1")
-        # self.socket_port = self.gui_state.get("socket_port", 5001)
         self.config_manager = ConfigManager()
+        
+        # --- ROS2 관련 변수 ---
+        self.ros2_publisher = None
         
         self.init_ui() # init_ui()를 먼저 호출하여 위젯을 생성합니다.
 
@@ -1075,6 +1068,26 @@ class MainApp(QWidget):
         if self.thread is not None and self.thread.isRunning():
             return
 
+        # --- ROS2 초기화 및 Publisher 생성 (메인 스레드에서) ---
+        if self.chk_send_ros2.isChecked() and ROS2_AVAILABLE:
+            if not rclpy.ok():
+                try:
+                    rclpy.init()
+                    print("[MainApp] ROS2 initialized.")
+                except Exception as e:
+                    QMessageBox.warning(self, "ROS2 Error", f"Failed to initialize ROS2: {e}")
+                    return
+            
+            if self.ros2_publisher is None:
+                try:
+                    self.ros2_publisher = ResultPublisher()
+                    print("[MainApp] ROS2 publisher created.")
+                except Exception as e:
+                    QMessageBox.warning(self, "ROS2 Error", f"Failed to create ROS2 publisher: {e}")
+                    return
+        else:
+            self.ros2_publisher = None
+
         # 'Start' 버튼을 누르는 시점에 현재 GUI 상태를 읽어옵니다.
         config_args = {
             'source': self.txt_source.text(),
@@ -1096,7 +1109,7 @@ class MainApp(QWidget):
             'playback_speed': self.slider_speed.value()
         }
 
-        self.thread = VideoThread(config_args)
+        self.thread = VideoThread(config_args, ros2_publisher=self.ros2_publisher) # publisher 전달
         self.thread.change_pixmap_signal.connect(self.update_image)
         # VideoThread에 현재 정면 설정 모드 상태 전달 (새로운 속성 사용)
         self.thread.set_dlib_front_face_mode = self.is_set_dlib_front_face_mode
@@ -1296,6 +1309,15 @@ class MainApp(QWidget):
         print("Closing application...")
         self._save_gui_state()
         self.stop_detection()
+
+        # --- ROS2 종료 ---
+        if self.ros2_publisher:
+            self.ros2_publisher.destroy_node()
+            print("[MainApp] ROS2 publisher destroyed.")
+        if ROS2_AVAILABLE and rclpy.ok():
+            rclpy.shutdown()
+            print("[MainApp] ROS2 shutdown.")
+
         event.accept()         # 창 닫기 허용
 
     def next_image(self):
