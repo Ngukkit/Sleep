@@ -13,18 +13,18 @@ def safe_json(data):
             "visibility": float(getattr(data, "visibility", 0.0)),
             "presence": float(getattr(data, "presence", 0.0))
         }
-    elif isinstance(data, np.ndarray):
-        return data.tolist()
-    elif isinstance(data, np.generic):
-        return data.item()
-    elif isinstance(data, dict):
-        return {k: safe_json(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [safe_json(v) for v in data]
-    elif isinstance(data, tuple):
-        return [safe_json(v) for v in data]
+    elif isinstance(data, np.ndarray): # numpy array
+        return data.tolist()           # convert to list
+    elif isinstance(data, np.generic): # numpy scalar
+        return data.item()            # convert to scalar value
+    elif isinstance(data, dict):   # dict
+        return {k: safe_json(v) for k, v in data.items()}  # convert keys and values
+    elif isinstance(data, list):  # list
+        return [safe_json(v) for v in data]    # convert elements
+    elif isinstance(data, tuple):  # tuple
+        return [safe_json(v) for v in data]    # convert elements
     else:
-        return data
+        return data   # leave as is
 
 class ResultPublisher(Node):
     def __init__(self):

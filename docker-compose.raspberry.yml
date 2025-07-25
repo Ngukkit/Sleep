@@ -10,6 +10,7 @@ services:
       - DISPLAY=${DISPLAY}
       - QT_QPA_PLATFORM=xcb
       - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=/home/pi/.Xauthority
       - QT_PLUGIN_PATH=/usr/lib/aarch64-linux-gnu/qt5/plugins
       - OMP_NUM_THREADS=4
       - MKL_NUM_THREADS=4
@@ -17,6 +18,7 @@ services:
 
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /home/pi/.Xauthority:/home/pi/.Xauthority:ro
       - .:/app
       - /dev/video0:/dev/video0:rw
       - /dev/video1:/dev/video1:rw  # USB 카메라
