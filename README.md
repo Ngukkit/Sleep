@@ -1,4 +1,4 @@
-# 실시간 운전자 상태 감지 시스템 v1.06
+# 실시간 운전자 상태 감지 시스템 v1.10
 
 YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, 주시 태만 등 다양한 상태를 실시간으로 감지하는 파이썬 기반 시스템입니다.
 
@@ -47,7 +47,36 @@ YOLOv5, Dlib, MediaPipe, OpenVINO를 활용하여 운전자의 졸음, 하품, �
 
 ## 📝 v1.10 업데이트 내용
 
-- **라즈베리파이 와 ROS2 연동**: 라즈베리파이에서 ROS2 Publisher 노드가 실행되어 C++ Subscriber 노드로 토픽을 통해 데이터를 전송합니다.
+### 🔧 라즈베리파이 ROS2 임베드 시스템 구축
+- **ROS2 Humble 기반 아키텍처**: ARM64 라즈베리파이에서 ROS2 Humble 버전을 활용한 분산 시스템 구현
+- **Publisher-Subscriber 패턴**: 
+  - **Python Publisher 노드**: 라즈베리파이에서 실시간 분석 결과를 `result_topic`으로 퍼블리시
+  - **C++ Subscriber 노드**: Ubuntu 시스템에서 분석 결과를 구독하여 실시간 모니터링
+- **JSON 메시지 통신**: 구조화된 JSON 형태로 YOLO, Dlib, MediaPipe, OpenVINO 분석 결과 전송
+- **ARM64 최적화**: 라즈베리파이 ARM64 아키텍처에 최적화된 Docker 컨테이너 환경
+
+### 🚀 임베드 시스템 특화 기능
+- **리소스 최적화**: 라즈베리파이의 제한된 메모리(2GB 제한)에 맞춘 성능 튜닝
+- **멀티스레드 제어**: OMP_NUM_THREADS=4로 CPU 사용량 최적화
+- **실시간 하드웨어 통합**: 
+  - USB 카메라(/dev/video0, /dev/video1) 직접 접근
+  - X11 GUI 지원으로 라즈베리파이에서 직접 모니터링 가능
+- **네트워크 투명성**: host 네트워크 모드로 ROS2 토픽 통신 최적화
+
+### 🔌 ROS2 통신 아키텍처
+- **토픽 기반 통신**: `result_topic`을 통한 비동기 메시지 전달
+- **자동 직렬화**: MediaPipe NormalizedLandmark, NumPy 배열 등 복잡한 데이터 타입 자동 JSON 변환
+- **에러 핸들링**: JSON 파싱 오류 및 네트워크 장애에 대한 robust한 처리
+- **실시간 성능**: 지연 없는 실시간 데이터 스트리밍
+
+### ⚙️ 임베드 환경 설정
+- **config.raspberry.json**: 라즈베리파이 전용 최적화 설정
+  - MediaPipe 모델만 활성화하여 리소스 절약
+  - 15 FPS 타겟으로 안정적인 실시간 처리
+  - 손 감지 신뢰도 임계값 조정 (0.3)
+- **Docker 기반 배포**: 
+  - `Dockerfile.raspberry`: ARM64 ROS2 Humble 기반 이미지
+  - `docker-compose.raspberry.yml`: 하드웨어 접근 및 환경 설정 자동화
 
 ## 📸 실행 화면 (v1.10)
 
@@ -372,41 +401,105 @@ OpenVINO 분석기의 세부 설정은 `config.json`의 `openvino` 섹션에서 
 | OpenVINO | 매우 높음 | 매우 빠름 | 낮음 | 보통 |
 | YOLO | 보통 | 빠름 | 높음 | 높음 |
 
-## ROS2 워크스페이스 빌드 및 실행법
+## 🔧 ROS2 워크스페이스 빌드 및 실행법
 
-1. 의존 패키지 설치(최초 1회, Ubuntu Humble 기준):
+### 📋 시스템 요구사항
+- **라즈베리파이**: ARM64 아키텍처, ROS2 Humble, Docker 지원
+- **Ubuntu PC**: x86_64 아키텍처, ROS2 Humble, C++ 컴파일 환경
+
+### 🚀 라즈베리파이 설정 (Publisher)
+
+1. **Docker 기반 실행 (권장)**:
+   ```bash
+   # 라즈베리파이에서 실행
+   docker-compose -f docker-compose.raspberry.yml up --build
+   ```
+
+2. **수동 설치 방법**:
+   ```bash
+   # ROS2 Humble 설치
+   sudo apt update
+   sudo apt install ros-humble-ros-base ros-humble-rclpy ros-humble-std-msgs
+   
+   # 의존성 설치
+   pip install -r requirements.txt
+   
+   # GUI 실행 (ROS2 Publisher 자동 시작)
+   python3 gui_app.py
+   ```
+
+### 🖥️ Ubuntu PC 설정 (Subscriber)
+
+1. **의존 패키지 설치** (최초 1회):
    ```bash
    sudo apt update
-   sudo apt install python3-colcon-common-extensions ros-humble-ros-base ros-humble-rclcpp ros-humble-rclpy ros-humble-std-msgs nlohmann-json3-dev
+   sudo apt install python3-colcon-common-extensions ros-humble-ros-base \
+                    ros-humble-rclcpp ros-humble-rclpy ros-humble-std-msgs \
+                    nlohmann-json3-dev build-essential cmake
    ```
 
-2. ROS2 워크스페이스 빌드:
+2. **ROS2 워크스페이스 빌드**:
    ```bash
    cd Ros2_ws
-   colcon build
+   colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
    ```
 
-3. 환경설정:
+3. **환경설정**:
    ```bash
    source install/setup.bash
-   # 또는 zsh 사용시
-   # source install/setup.zsh
+   # zsh 사용시: source install/setup.zsh
    ```
 
-4. 실행 예시:
-   - Python 퍼블리셔 노드 실행:
-     ```bash
-     ros2 run result_publisher publisher_node
-     ```
-   - C++ 서브스크라이버 노드 실행:
-     ```bash
-     ros2 run result_subscriber result_subscriber_node
-     ```
+### 🔄 실행 순서
 
-5. 참고:
-   - 빌드/설치/로그 디렉토리는 git에 포함하지 않으므로, 각 PC에서 반드시 colcon build를 해주세요.
-   - source install/setup.bash 는 반드시 Ros2_ws 폴더에서 실행해야 합니다.
-   - publisher는 프로그램에서 자동 실행되니 result_subscriber_node만 실행해주세요
-   - ROS2 및 의존 패키지가 설치되어 있어야 정상 동작합니다.
+1. **라즈베리파이에서 Publisher 실행**:
+   ```bash
+   # Docker 방식
+   docker-compose -f docker-compose.raspberry.yml up
+   
+   # 또는 직접 실행
+   python3 gui_app.py  # GUI에서 "ROS2 Data Send" 체크
+   ```
+
+2. **Ubuntu PC에서 Subscriber 실행**:
+   ```bash
+   cd Ros2_ws
+   source install/setup.bash
+   ros2 run result_subscriber result_subscriber_node
+   ```
+
+### 📊 데이터 흐름 확인
+
+- **토픽 목록 확인**:
+  ```bash
+  ros2 topic list
+  # 출력: /result_topic
+  ```
+
+- **실시간 메시지 모니터링**:
+  ```bash
+  ros2 topic echo /result_topic
+  ```
+
+- **네트워크 상태 확인**:
+  ```bash
+  ros2 node list
+  ros2 node info /result_publisher
+  ros2 node info /result_subscriber
+  ```
+
+### ⚠️ 주의사항
+
+- **네트워크 설정**: 라즈베리파이와 Ubuntu PC가 같은 네트워크에 연결되어 있어야 함
+- **ROS_DOMAIN_ID**: 동일한 도메인 ID 사용 필요 (기본값: 0)
+- **방화벽**: ROS2 통신을 위한 포트 개방 필요 (11311, 멀티캐스트 포트들)
+- **메모리 관리**: 라즈베리파이에서 메모리 사용량 모니터링 권장
+- **환경설정**: `source install/setup.bash`는 반드시 `Ros2_ws` 폴더에서 실행
+
+### 🔧 문제 해결
+
+- **빌드 오류**: `colcon build --cmake-clean-cache` 후 재빌드
+- **통신 실패**: `ROS_DOMAIN_ID` 환경변수 확인
+- **성능 이슈**: 라즈베리파이 CPU/메모리 사용률 확인
 
 
