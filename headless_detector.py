@@ -6,9 +6,20 @@ from pathlib import Path
 #from dlib_analyzer import DlibAnalyzer
 from mediapipe_analyzer import MediaPipeAnalyzer
 #from openvino_analyzer import OpenVINOAnalyzer
-import rclpy
-from result_publisher.publisher_node import ResultPublisher, safe_json
 from config_manager import ConfigManager
+
+# --- ROS2 관련 임포트 ---
+try:
+    import rclpy
+    from result_publisher.publisher_node import ResultPublisher, safe_json
+    ROS2_AVAILABLE = True
+except ImportError:
+    print("[Warning] ROS2 Python 패키지가 설치되어 있지 않습니다. ROS2 전송 기능이 비활성화됩니다.")
+    ROS2_AVAILABLE = False
+    # Define placeholders to prevent crashes
+    rclpy = None
+    ResultPublisher = None
+    def safe_json(data): return data # Dummy function
 
 def load_config(config_path="config.json"):
     with open(config_path, "r") as f:
@@ -50,7 +61,8 @@ def main():
     mediapipe_analyzer = MediaPipeAnalyzer(**mediapipe_args) if enable_mediapipe else None
 
     # ROS2 Publisher 준비
-    if enable_ros2:
+    publisher = None
+    if enable_ros2 and ROS2_AVAILABLE:
         rclpy.init()
         publisher = ResultPublisher()
 
@@ -203,7 +215,7 @@ def main():
             time.sleep(0.01)
     finally:
         cap.release()
-        if enable_ros2 and rclpy.ok():
+        if enable_ros2 and ROS2_AVAILABLE and rclpy.ok():
             publisher.destroy_node()
             rclpy.shutdown()
         print("[HeadlessDetector] Finished.")
